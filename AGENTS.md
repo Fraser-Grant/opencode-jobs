@@ -2,8 +2,9 @@
 
 opencode plugin: recurring agent jobs as systemd user timers, with
 git-committable job definitions, JSONL run history, and session continuity.
-Graduated from `plugins/scheduler` in the codeagentconfig repo; packaging
-rules live in that repo's `packagedPlugins/skills/`.
+Published as [`opencode-jobs`](https://www.npmjs.com/package/opencode-jobs)
+on npm; loads from the `plugin` config array in a project `opencode.json`
+or the global `~/.config/opencode/opencode.json`.
 
 ## Quality gate
 
