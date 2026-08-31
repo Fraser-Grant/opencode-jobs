@@ -11,9 +11,15 @@ After a standalone change lands, synchronize the mirror from the
 `codeagentconfig` root:
 
 ```sh
-git subtree pull --prefix=packagedPlugins/opencode-jobs \
-  git@github.com:Fraser-Grant/opencode-jobs.git main --squash
+mirror=$(git subtree split --prefix=packagedPlugins/opencode-jobs HEAD)
+git fetch git@github.com:Fraser-Grant/opencode-jobs.git main
+git diff --binary "$mirror" FETCH_HEAD | \
+  git apply --directory=packagedPlugins/opencode-jobs
 ```
+
+Review and commit the resulting mirror changes in `codeagentconfig`. The split
+SHA only supplies the current directory tree; it does not need to share commit
+history with standalone `main`.
 
 ## Changes
 
