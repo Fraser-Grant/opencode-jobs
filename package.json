@@ -31,10 +31,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "check": "prettier --check . && eslint && tsc --noEmit",
-    "smoke": "npm run build && node scripts/smoke.mjs && node scripts/cli-smoke.mjs",
-    "release:patch": "npm version patch && npm publish",
-    "release:minor": "npm version minor && npm publish",
-    "release:major": "npm version major && npm publish"
+    "smoke": "npm run build && node scripts/smoke.mjs && node scripts/cli-smoke.mjs"
   },
   "keywords": [
     "opencode",
