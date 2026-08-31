@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { atomicWrite, registryPath } from "./paths.js";
-import { isRecord, stringProperty } from "./json.js";
 
 export interface RegistryEntry {
   scopeId: string;
@@ -16,31 +16,28 @@ export interface Registry {
   projects: Record<string, RegistryEntry>;
 }
 
-function isRegistryEntry(value: unknown): value is RegistryEntry {
-  if (!isRecord(value)) return false;
-  return (
-    stringProperty(value, "scopeId") !== undefined &&
-    stringProperty(value, "workdir") !== undefined &&
-    stringProperty(value, "enabledAt") !== undefined &&
-    stringProperty(value, "updatedAt") !== undefined &&
-    Array.isArray(value.jobs) &&
-    value.jobs.every((job) => typeof job === "string")
-  );
-}
+const registryEntrySchema = z.looseObject({
+  scopeId: z.string(),
+  workdir: z.string(),
+  enabledAt: z.string(),
+  updatedAt: z.string(),
+  jobs: z.array(z.string()),
+});
+
+const registryFileSchema = z.object({
+  version: z.literal(1),
+  projects: z.record(z.string(), z.unknown()),
+});
 
 export function loadRegistry(): Registry {
   try {
     const parsed: unknown = JSON.parse(readFileSync(registryPath(), "utf8"));
-    if (
-      !isRecord(parsed) ||
-      parsed.version !== 1 ||
-      !isRecord(parsed.projects)
-    ) {
-      return { version: 1, projects: {} };
-    }
+    const result = registryFileSchema.safeParse(parsed);
+    if (!result.success) return { version: 1, projects: {} };
     const projects: Record<string, RegistryEntry> = {};
-    for (const [key, value] of Object.entries(parsed.projects)) {
-      if (isRegistryEntry(value)) projects[key] = value;
+    for (const [key, value] of Object.entries(result.data.projects)) {
+      const entry = registryEntrySchema.safeParse(value);
+      if (entry.success) projects[key] = entry.data;
     }
     return { version: 1, projects };
   } catch {

@@ -15,12 +15,17 @@ const work = "/tmp/opencode/opencode-jobs-smoke";
 
 rmSync(buildDir, { recursive: true, force: true });
 mkdirSync(buildDir, { recursive: true });
+process.env.XDG_CONFIG_HOME = join(buildDir, "config");
 execSync(
   "npx tsc src/index.ts src/internals.ts --outDir node_modules/.cache/smoke --module es2022 --moduleResolution bundler --target es2022 --lib es2023 --skipLibCheck --strict --types node",
   { cwd: repo, stdio: "inherit" },
 );
 writeFileSync(join(buildDir, "package.json"), '{"type":"module"}');
 const { internals } = await import(join(buildDir, "internals.js"));
+const { loadJobFile } = await import(join(buildDir, "job.js"));
+const { registryPath, runsFile } = await import(join(buildDir, "paths.js"));
+const { loadRegistry } = await import(join(buildDir, "registry.js"));
+const { readRunRecords } = await import(join(buildDir, "runs.js"));
 
 const {
   parseCron,
@@ -114,6 +119,80 @@ assert.equal(validateSession("compact", "x"), "compact");
 assert.equal(validateSession("compact+last", "x"), "compact+last");
 assert.throws(() => validateSession("sometimes", "x"));
 assert.throws(() => validateSession(7, "x"));
+
+const jobFile = join(buildDir, "validated-job.json");
+const validJobDefinition = {
+  name: "Validated Job",
+  schedule: "0 9 * * *",
+  run: { prompt: "Review the project" },
+};
+writeFileSync(jobFile, JSON.stringify(validJobDefinition));
+const validJobResult = loadJobFile(jobFile);
+assert.equal(validJobResult.ok, true);
+assert.equal(validJobResult.job.slug, "validated-job");
+assert.equal(validJobResult.job.session, undefined);
+assert.equal(validJobResult.job.createdAt, validJobResult.job.updatedAt);
+
+writeFileSync(jobFile, JSON.stringify({ ...validJobDefinition, slug: 7 }));
+const invalidSlugResult = loadJobFile(jobFile);
+assert.equal(invalidSlugResult.ok, false);
+assert.match(invalidSlugResult.error, /"slug"/);
+
+writeFileSync(
+  jobFile,
+  JSON.stringify({ ...validJobDefinition, timeoutSecond: 60 }),
+);
+const unknownFieldResult = loadJobFile(jobFile);
+assert.equal(unknownFieldResult.ok, false);
+assert.match(unknownFieldResult.error, /timeoutSecond/);
+
+writeFileSync(
+  jobFile,
+  JSON.stringify({
+    ...validJobDefinition,
+    run: { prompt: "Review the project", arguments: "unexpected" },
+  }),
+);
+const invalidRunResult = loadJobFile(jobFile);
+assert.equal(invalidRunResult.ok, false);
+assert.match(invalidRunResult.error, /run\.arguments/);
+
+const registryFile = registryPath();
+mkdirSync(dirname(registryFile), { recursive: true });
+writeFileSync(
+  registryFile,
+  JSON.stringify({
+    version: 1,
+    projects: {
+      valid: {
+        scopeId: "scope",
+        workdir: "/project",
+        enabledAt: "created",
+        updatedAt: "updated",
+        jobs: ["job"],
+      },
+      invalid: { scopeId: 7 },
+    },
+  }),
+);
+assert.deepEqual(Object.keys(loadRegistry().projects), ["valid"]);
+
+const tolerantRunsFile = runsFile("schema", "history");
+mkdirSync(dirname(tolerantRunsFile), { recursive: true });
+writeFileSync(
+  tolerantRunsFile,
+  [
+    JSON.stringify({ status: "success", durationMs: 1000 }),
+    "malformed",
+    JSON.stringify({ status: 7, startedBy: "manual" }),
+    JSON.stringify([]),
+  ].join("\n"),
+);
+assert.deepEqual(readRunRecords("schema", "history", 10), [
+  { status: "success", durationMs: 1000 },
+  { status: undefined, startedBy: "manual" },
+]);
+
 assert.deepEqual(
   buildOpencodeArguments(
     {

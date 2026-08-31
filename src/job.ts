@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import { parseCron } from "./cron.js";
 import { atomicWrite, jobsDirectory, nowIso } from "./paths.js";
-import { errorMessage, isRecord, stringProperty } from "./json.js";
+import { errorMessage } from "./json.js";
 
 interface RunOptions {
   agent?: string;
@@ -43,54 +44,112 @@ export interface Job {
 
 export type JobResult = { ok: true; job: Job } | { ok: false; error: string };
 
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value
-    : undefined;
+const nonEmptyStringSchema = z
+  .string()
+  .refine((value) => value.trim().length > 0, "must be a non-empty string");
+
+const runSpecSchema = z
+  .strictObject({
+    prompt: nonEmptyStringSchema.optional(),
+    command: nonEmptyStringSchema.optional(),
+    arguments: z.string().optional(),
+    agent: z.string().optional(),
+    model: z.string().optional(),
+  })
+  .superRefine((run, context) => {
+    if ((run.prompt === undefined) === (run.command === undefined)) {
+      context.addIssue({
+        code: "custom",
+        message:
+          'must set exactly one of "prompt" (natural language) or "command" (custom command name)',
+      });
+    }
+    if (run.prompt !== undefined && run.arguments !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["arguments"],
+        message: "only applies to command jobs",
+      });
+    }
+  })
+  .transform((run): RunSpec => {
+    if (run.command !== undefined) {
+      return {
+        command: run.command,
+        ...(run.arguments !== undefined && { arguments: run.arguments }),
+        ...(run.agent !== undefined && { agent: run.agent }),
+        ...(run.model !== undefined && { model: run.model }),
+      };
+    }
+    return {
+      prompt: run.prompt ?? "",
+      ...(run.agent !== undefined && { agent: run.agent }),
+      ...(run.model !== undefined && { model: run.model }),
+    };
+  });
+
+const sessionSchema = z.enum(SESSION_MODES, {
+  error: `must be one of ${SESSION_MODES.map((mode) => `"${mode}"`).join(", ")}`,
+});
+
+const guardSchema = z
+  .string()
+  .refine(
+    (value) => value.trim().length > 0,
+    "must be a non-empty shell command string",
+  );
+
+const timeoutSchema = z
+  .number()
+  .int()
+  .nonnegative("must be a non-negative integer");
+
+const cronSchema = z.string().superRefine((schedule, context) => {
+  try {
+    parseCron(schedule);
+  } catch (error) {
+    context.addIssue({ code: "custom", message: errorMessage(error) });
+  }
+});
+
+const jobFileSchema = z.strictObject({
+  slug: z.string().optional(),
+  name: nonEmptyStringSchema,
+  schedule: cronSchema,
+  run: runSpecSchema,
+  session: sessionSchema.default("new"),
+  guard: guardSchema.optional(),
+  timeoutSeconds: timeoutSchema.optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+
+function formatValidationError(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (issue === undefined) return "invalid job definition";
+  const field = issue.path.join(".");
+  return field.length === 0 ? issue.message : `"${field}": ${issue.message}`;
+}
+
+function parseWithContext<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  context: string,
+): T {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    throw new Error(`${context}: ${formatValidationError(result.error)}`);
+  }
+  return result.data;
 }
 
 export function validateRunSpec(run: unknown, context: string): RunSpec {
-  if (!isRecord(run)) throw new Error(`${context}: "run" must be an object`);
-  const prompt = nonEmptyString(run.prompt);
-  const command = nonEmptyString(run.command);
-  if ((prompt !== undefined) === (command !== undefined)) {
-    throw new Error(
-      `${context}: "run" must set exactly one of "prompt" (natural language) or "command" (custom command name)`,
-    );
-  }
-  const commandArguments = stringProperty(run, "arguments");
-  const agent = stringProperty(run, "agent");
-  const model = stringProperty(run, "model");
-  if (command !== undefined) {
-    return {
-      command,
-      ...(commandArguments !== undefined && { arguments: commandArguments }),
-      ...(agent !== undefined && { agent }),
-      ...(model !== undefined && { model }),
-    };
-  }
-  if (commandArguments !== undefined) {
-    throw new Error(`${context}: "run.arguments" only applies to command jobs`);
-  }
-  return {
-    prompt: prompt ?? "",
-    ...(agent !== undefined && { agent }),
-    ...(model !== undefined && { model }),
-  };
+  return parseWithContext(runSpecSchema, run, context);
 }
 
 export function validateSession(value: unknown, context: string): SessionMode {
   if (value === undefined) return "new";
-  const mode =
-    typeof value === "string"
-      ? SESSION_MODES.find((candidate) => candidate === value)
-      : undefined;
-  if (mode === undefined) {
-    throw new Error(
-      `${context}: "session" must be one of ${SESSION_MODES.map((candidate) => `"${candidate}"`).join(", ")}`,
-    );
-  }
-  return mode;
+  return parseWithContext(sessionSchema, value, context);
 }
 
 export function validateTimeout(
@@ -98,12 +157,7 @@ export function validateTimeout(
   context: string,
 ): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error(
-      `${context}: "timeoutSeconds" must be a non-negative integer`,
-    );
-  }
-  return value;
+  return parseWithContext(timeoutSchema, value, context);
 }
 
 export function validateGuard(
@@ -111,21 +165,22 @@ export function validateGuard(
   context: string,
 ): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(
-      `${context}: "guard" must be a non-empty shell command string`,
-    );
-  }
-  return value;
+  return parseWithContext(guardSchema, value, context);
 }
 
 export function loadJobFile(file: string, expectedSlug?: string): JobResult {
-  const stem = path.basename(file).replaceAll(/\.json$/g, "");
+  const stem = path.basename(file, ".json");
   try {
     const object: unknown = JSON.parse(readFileSync(file, "utf8"));
-    if (!isRecord(object))
-      return { ok: false, error: `${stem}.json: not a job object` };
-    const slug = stringProperty(object, "slug") ?? stem;
+    const result = jobFileSchema.safeParse(object);
+    if (!result.success) {
+      return {
+        ok: false,
+        error: `${stem}.json: ${formatValidationError(result.error)}`,
+      };
+    }
+    const definition = result.data;
+    const slug = definition.slug ?? stem;
     if (slug !== stem)
       return {
         ok: false,
@@ -133,34 +188,21 @@ export function loadJobFile(file: string, expectedSlug?: string): JobResult {
       };
     if (expectedSlug !== undefined && slug !== expectedSlug)
       return { ok: false, error: `${stem}.json: unexpected slug` };
-    const name = nonEmptyString(object.name);
-    if (name === undefined)
-      return { ok: false, error: `${stem}.json: "name" is required` };
-    const schedule = stringProperty(object, "schedule") ?? "";
-    try {
-      parseCron(schedule);
-    } catch (error) {
-      return { ok: false, error: `${stem}.json: ${errorMessage(error)}` };
-    }
-    const run = validateRunSpec(object.run, `${stem}.json`);
-    const session = validateSession(object.session, `${stem}.json`);
-    const guard = validateGuard(object.guard, `${stem}.json`);
-    const timeoutSeconds = validateTimeout(
-      object.timeoutSeconds,
-      `${stem}.json`,
-    );
+    const timestamp = nowIso();
     return {
       ok: true,
       job: {
         slug,
-        name,
-        schedule,
-        run,
-        ...(session !== "new" && { session }),
-        ...(guard !== undefined && { guard }),
-        ...(timeoutSeconds !== undefined && { timeoutSeconds }),
-        createdAt: stringProperty(object, "createdAt") ?? nowIso(),
-        updatedAt: stringProperty(object, "updatedAt") ?? nowIso(),
+        name: definition.name,
+        schedule: definition.schedule,
+        run: definition.run,
+        ...(definition.session !== "new" && { session: definition.session }),
+        ...(definition.guard !== undefined && { guard: definition.guard }),
+        ...(definition.timeoutSeconds !== undefined && {
+          timeoutSeconds: definition.timeoutSeconds,
+        }),
+        createdAt: definition.createdAt ?? timestamp,
+        updatedAt: definition.updatedAt ?? timestamp,
       },
     };
   } catch (error) {

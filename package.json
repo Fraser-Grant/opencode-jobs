@@ -24,7 +24,7 @@
     }
   },
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin && bun build src/cli.ts --outfile dist/cli.js --target node --format esm && tsc -p tsconfig.build.json",
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin --external zod && bun build src/cli.ts --outfile dist/cli.js --target node --format esm --external zod && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "format": "prettier --write .",
@@ -59,7 +59,8 @@
   },
   "homepage": "https://github.com/Fraser-Grant/opencode-jobs#readme",
   "dependencies": {
-    "@opencode-ai/plugin": "^1.18.18"
+    "@opencode-ai/plugin": "^1.18.18",
+    "zod": "4.1.8"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.0.0"

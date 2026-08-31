@@ -1,44 +1,23 @@
 import { existsSync, readFileSync } from "node:fs";
+import { z } from "zod";
 import { runsFile } from "./paths.js";
-import { isRecord, numberProperty, stringProperty } from "./json.js";
 
-export interface RunRecord {
-  runId?: string;
-  slug?: string;
-  scopeId?: string;
-  startedAt?: number;
-  finishedAt?: number;
-  durationMs?: number;
-  status?: string;
-  exitCode?: number;
-  sessionId?: string;
-  startedBy?: string;
-}
+const optionalString = z.string().optional().catch(undefined);
+const optionalNumber = z.number().optional().catch(undefined);
+const runRecordSchema = z.object({
+  runId: optionalString,
+  slug: optionalString,
+  scopeId: optionalString,
+  startedAt: optionalNumber,
+  finishedAt: optionalNumber,
+  durationMs: optionalNumber,
+  status: optionalString,
+  exitCode: optionalNumber,
+  sessionId: optionalString,
+  startedBy: optionalString,
+});
 
-function parseRunRecord(value: Record<string, unknown>): RunRecord {
-  const runId = stringProperty(value, "runId");
-  const slug = stringProperty(value, "slug");
-  const scopeId = stringProperty(value, "scopeId");
-  const startedAt = numberProperty(value, "startedAt");
-  const finishedAt = numberProperty(value, "finishedAt");
-  const durationMs = numberProperty(value, "durationMs");
-  const status = stringProperty(value, "status");
-  const exitCode = numberProperty(value, "exitCode");
-  const sessionId = stringProperty(value, "sessionId");
-  const startedBy = stringProperty(value, "startedBy");
-  return {
-    ...(runId !== undefined && { runId }),
-    ...(slug !== undefined && { slug }),
-    ...(scopeId !== undefined && { scopeId }),
-    ...(startedAt !== undefined && { startedAt }),
-    ...(finishedAt !== undefined && { finishedAt }),
-    ...(durationMs !== undefined && { durationMs }),
-    ...(status !== undefined && { status }),
-    ...(exitCode !== undefined && { exitCode }),
-    ...(sessionId !== undefined && { sessionId }),
-    ...(startedBy !== undefined && { startedBy }),
-  };
-}
+export type RunRecord = z.infer<typeof runRecordSchema>;
 
 export function readRunRecords(
   scopeId: string,
@@ -52,7 +31,8 @@ export function readRunRecords(
     if (line.trim().length === 0) continue;
     try {
       const value: unknown = JSON.parse(line);
-      if (isRecord(value)) records.push(parseRunRecord(value));
+      const result = runRecordSchema.safeParse(value);
+      if (result.success) records.push(result.data);
     } catch {
       // Malformed JSONL line: skip it.
     }

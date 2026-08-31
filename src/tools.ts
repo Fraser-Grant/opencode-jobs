@@ -130,7 +130,16 @@ function scheduleJobOutput(
   } catch (error) {
     return fail(errorMessage(error));
   }
-  const run = validateRunSpec(input, "job");
+  const run = validateRunSpec(
+    {
+      prompt: input.prompt,
+      command: input.command,
+      arguments: input.arguments,
+      agent: input.agent,
+      model: input.model,
+    },
+    "job",
+  );
   const session = validateSession(input.session, "job");
   const guard = validateGuard(input.guard, "job");
   const timeoutSeconds = validateTimeout(input.timeoutSeconds, "job");

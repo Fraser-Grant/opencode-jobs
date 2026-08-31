@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, rmdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { isRecord } from "./json.js";
+import { z } from "zod";
 import {
   atomicWrite,
   deriveScopeId,
@@ -15,6 +15,10 @@ import { registryEntry } from "./registry.js";
 export const PACKAGE_NAME = "opencode-jobs";
 export const SKILL_NAME = "opencode-jobs";
 const CONFIG_SCHEMA = "https://opencode.ai/config.json";
+const configSchema = z.looseObject({
+  plugin: z.array(z.unknown()).optional(),
+});
+type Config = z.infer<typeof configSchema>;
 
 export type ConfigInstall =
   | { status: "added" | "present"; configPath: string }
@@ -46,10 +50,11 @@ function existingConfigPath(projectDirectory: string): string | undefined {
   return undefined;
 }
 
-function readConfig(configPath: string): Record<string, unknown> | undefined {
+function readConfig(configPath: string): Config | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(configPath, "utf8"));
-    return isRecord(value) && !Array.isArray(value) ? value : undefined;
+    const result = configSchema.safeParse(value);
+    return result.success ? result.data : undefined;
   } catch {
     // JSONC comments and malformed JSON must be handled by the user.
     return undefined;
@@ -90,11 +95,7 @@ export function installPluginConfig(projectDirectory: string): ConfigInstall {
 
   const config = readConfig(configPath);
   if (config === undefined) return { status: "manual", configPath };
-  const plugins = config.plugin;
-  if (plugins !== undefined && !Array.isArray(plugins)) {
-    return { status: "manual", configPath };
-  }
-  const entries: unknown[] = Array.isArray(plugins) ? plugins : [];
+  const entries = config.plugin ?? [];
   if (entries.some((entry) => isPackageReference(entry))) {
     return { status: "present", configPath };
   }
@@ -184,11 +185,7 @@ export function uninstallPluginConfig(
   if (existingPath === undefined) return { status: "absent", configPath };
   const config = readConfig(configPath);
   if (config === undefined) return { status: "manual", configPath };
-  const plugins = config.plugin;
-  if (plugins !== undefined && !Array.isArray(plugins)) {
-    return { status: "manual", configPath };
-  }
-  const entries: unknown[] = Array.isArray(plugins) ? plugins : [];
+  const entries = config.plugin ?? [];
   const remaining = entries.filter((entry) => !isPackageReference(entry));
   if (remaining.length === entries.length) {
     return { status: "absent", configPath };
