@@ -29,9 +29,11 @@
     "prepublishOnly": "npm run clean && npm run build",
     "format": "prettier --write .",
     "lint": "eslint",
+    "test": "npm run build && npm run test:integration",
+    "test:integration": "node --test test/integration/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "check": "prettier --check . && eslint && tsc --noEmit",
-    "smoke": "npm run build && node scripts/smoke.mjs && node scripts/cli-smoke.mjs"
+    "smoke": "npm run build && node scripts/smoke.mjs && node scripts/cli-smoke.mjs && npm run test:integration"
   },
   "keywords": [
     "opencode",

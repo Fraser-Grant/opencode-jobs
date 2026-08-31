@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- return structured tool errors when job run, session, guard, or timeout validation fails
+
+### Tests
+
+- add integration coverage for the complete scheduled-job lifecycle and installer behavior
+
 ## [0.1.1](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v0.1.0...opencode-jobs-v0.1.1) (2026-08-31)
 
 ### Bug Fixes

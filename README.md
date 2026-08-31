@@ -193,7 +193,8 @@ Not supported on macOS or Windows.
 npm install
 npm run check    # prettier + eslint + tsc
 npm run build    # Bun plugin bundle + Node CLI bundle + declarations
-npm run smoke    # build, scheduler behavior, CLI install, and package contents
+npm test         # build + Node integration tests
+npm run smoke    # full behavioral gate, including generated scripts and CLI install
 ```
 
 Node >= 20 is required for the CLI and dev toolchain; the plugin runs on Bun

@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -15,6 +17,7 @@ import { fileURLToPath } from "node:url";
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const cli = join(repo, "dist", "cli.js");
 const work = "/tmp/opencode/opencode-jobs-cli-smoke";
+const demoFixture = join(repo, "scripts", "fixtures", "demo");
 
 function runCli(arguments_, options = {}) {
   return execFileSync(process.execPath, [cli, ...arguments_], {
@@ -36,8 +39,58 @@ function scopeIdFor(project) {
   return `${project.split("/").pop()}-${hash}`;
 }
 
+function listFiles(directory, prefix = "") {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const relative = join(prefix, entry.name);
+    return entry.isDirectory()
+      ? listFiles(join(directory, entry.name), relative)
+      : [relative];
+  });
+}
+
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
+
+const demoProject = join(work, "demo");
+cpSync(demoFixture, demoProject, { recursive: true });
+const demoBefore = JSON.parse(
+  readFileSync(join(demoProject, "opencode.json"), "utf8"),
+);
+const demoInstall = JSON.parse(runInstall(demoProject));
+assert.equal(demoInstall.plugin.status, "added");
+assert.equal(demoInstall.skill.status, "written");
+assert.deepEqual(listFiles(demoProject).toSorted(), [
+  ".opencode/skills/opencode-jobs/SKILL.md",
+  "README.md",
+  "opencode.json",
+]);
+assert.deepEqual(
+  JSON.parse(readFileSync(join(demoProject, "opencode.json"), "utf8")),
+  {
+    $schema: "https://opencode.ai/config.json",
+    model: "provider/model",
+    plugin: ["existing-plugin", "opencode-jobs"],
+  },
+);
+assert.equal(
+  readFileSync(
+    join(demoProject, ".opencode/skills/opencode-jobs/SKILL.md"),
+    "utf8",
+  ),
+  readFileSync(join(repo, "skill/opencode-jobs/SKILL.md"), "utf8"),
+);
+const demoRepeat = JSON.parse(runInstall(demoProject));
+assert.equal(demoRepeat.plugin.status, "present");
+assert.equal(demoRepeat.skill.status, "unchanged");
+runUninstall(demoProject);
+assert.deepEqual(listFiles(demoProject).toSorted(), [
+  "README.md",
+  "opencode.json",
+]);
+assert.deepEqual(
+  JSON.parse(readFileSync(join(demoProject, "opencode.json"), "utf8")),
+  demoBefore,
+);
 
 const first = JSON.parse(runInstall(work));
 assert.equal(first.plugin.status, "added");

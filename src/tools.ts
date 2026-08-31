@@ -130,19 +130,27 @@ function scheduleJobOutput(
   } catch (error) {
     return fail(errorMessage(error));
   }
-  const run = validateRunSpec(
-    {
-      prompt: input.prompt,
-      command: input.command,
-      arguments: input.arguments,
-      agent: input.agent,
-      model: input.model,
-    },
-    "job",
-  );
-  const session = validateSession(input.session, "job");
-  const guard = validateGuard(input.guard, "job");
-  const timeoutSeconds = validateTimeout(input.timeoutSeconds, "job");
+  let run: Job["run"];
+  let session: Job["session"] | "new";
+  let guard: string | undefined;
+  let timeoutSeconds: number | undefined;
+  try {
+    run = validateRunSpec(
+      {
+        prompt: input.prompt,
+        command: input.command,
+        arguments: input.arguments,
+        agent: input.agent,
+        model: input.model,
+      },
+      "job",
+    );
+    session = validateSession(input.session, "job");
+    guard = validateGuard(input.guard, "job");
+    timeoutSeconds = validateTimeout(input.timeoutSeconds, "job");
+  } catch (error) {
+    return fail(errorMessage(error));
+  }
   const existing = loadJobFile(
     path.join(jobsDirectory(directory), `${slug}.json`),
     slug,

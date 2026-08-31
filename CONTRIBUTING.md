@@ -14,6 +14,15 @@
    - `docs:`, `test:`, `refactor:`, and `chore:` for changes that do not need a
      release on their own.
 
+## Tests
+
+- `npm test` builds the package and runs the `node:test` integration suite.
+- `npm run smoke` is the full behavioral gate: generated POSIX scripts,
+  systemd unit verification, CLI installation, built-plugin tools, and the
+  fake-systemd lifecycle tests.
+- Integration tests use temporary projects, an isolated `XDG_CONFIG_HOME`, and
+  fake executables on `PATH` instead of monkey-patching Node process APIs.
+
 ## Branch policy
 
 - Branch from `main` and merge through a pull request; direct pushes are not
