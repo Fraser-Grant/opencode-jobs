@@ -7,8 +7,6 @@ actually committed.
 
 ## Now: dependable delivery
 
-- Establish the standalone repository as the source of truth and keep the
-  `codeagentconfig` mirror synchronized.
 - Automate versioning, changelog generation, GitHub releases, and npm
   publication without long-lived credentials.
 - Require CI and behavioral smoke coverage for every behavior change.

@@ -1,26 +1,5 @@
 # Contributing
 
-## Source of truth
-
-[`Fraser-Grant/opencode-jobs`](https://github.com/Fraser-Grant/opencode-jobs)
-is the authoritative repository. The copy under
-`codeagentconfig/packagedPlugins/opencode-jobs` is a downstream mirror for
-local integration and should not receive independent feature commits.
-
-After a standalone change lands, synchronize the mirror from the
-`codeagentconfig` root:
-
-```sh
-mirror=$(git subtree split --prefix=packagedPlugins/opencode-jobs HEAD)
-git fetch git@github.com:Fraser-Grant/opencode-jobs.git main
-git diff --binary "$mirror" FETCH_HEAD | \
-  git apply --directory=packagedPlugins/opencode-jobs
-```
-
-Review and commit the resulting mirror changes in `codeagentconfig`. The split
-SHA only supplies the current directory tree; it does not need to share commit
-history with standalone `main`.
-
 ## Changes
 
 1. Open or reference a GitHub issue for behavior changes that need design or
@@ -35,6 +14,18 @@ history with standalone `main`.
    - `docs:`, `test:`, `refactor:`, and `chore:` for changes that do not need a
      release on their own.
 
+## Branch policy
+
+- Branch from `main` and merge through a pull request; direct pushes are not
+  part of the release process.
+- `CI / check` must pass on the current `main` base before merge, and review
+  conversations must be resolved.
+- Use squash merges so the Conventional Commit pull request title becomes the
+  commit Release Please evaluates.
+- Force pushes and branch deletion are blocked on `main`.
+- No approval count is required while the repository has one maintainer. Seek
+  review for security-sensitive, persistence-format, and release changes.
+
 ## Releases
 
 Release Please maintains a release pull request containing the version bump
@@ -48,9 +39,13 @@ The npm package should trust the GitHub Actions publisher with:
 - Workflow: `release.yml`
 - Allowed action: `npm publish`
 
-Trusted publishing requires no long-lived npm credential. `NPM_TOKEN` remains
-an optional fallback until OIDC publishing has completed successfully once.
+Trusted publishing requires no long-lived npm credential. The publish job uses
+OIDC only and deliberately has no `NPM_TOKEN` fallback. After the first
+successful OIDC release, set npm publishing access to **Require two-factor
+authentication and disallow tokens**.
 
-Release Please uses `GITHUB_TOKEN` by default. Add a fine-grained
-`RELEASE_PLEASE_TOKEN` secret if release pull requests must trigger other
-workflows automatically; GitHub suppresses events created by `GITHUB_TOKEN`.
+`RELEASE_PLEASE_TOKEN` is required because GitHub suppresses workflow events
+created by `GITHUB_TOKEN`. Store a fine-grained personal access token with
+repository access to `opencode-jobs` and read/write permissions for Contents,
+Issues, and Pull requests. Release Please pull requests then receive the same
+required CI check as every other pull request.
