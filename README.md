@@ -202,3 +202,8 @@ inside opencode.
 ## License
 
 MIT
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the quality and release workflow and
+[ROADMAP.md](ROADMAP.md) for current planning priorities.
