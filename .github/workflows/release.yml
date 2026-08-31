@@ -24,6 +24,33 @@ jobs:
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
+      - if: ${{ steps.release.outputs.pr != '' }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      - if: ${{ steps.release.outputs.pr != '' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - if: ${{ steps.release.outputs.pr != '' }}
+        run: npm ci
+
+      - if: ${{ steps.release.outputs.pr != '' }}
+        run: |
+          npx prettier --write CHANGELOG.md
+          if git diff --quiet -- CHANGELOG.md; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore: format changelog"
+          git push
+
   publish:
     needs: release
     if: ${{ needs.release.outputs.created == 'true' }}
