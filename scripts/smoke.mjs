@@ -290,10 +290,15 @@ writeFileSync(
     '  prev="$a"',
     "done",
     'echo "session used=${sess:-none}" >> "$MARK"',
+    'if [ "$FAKE_FAIL" = "auth" ]; then',
+    '  echo "Error: authentication required" >&2',
+    "  exit 1",
+    "fi",
     'if [ -n "$FAKE_FAIL" ]; then',
     '  echo "Error: Session not found" >&2',
     "  exit 1",
     "fi",
+    'printf \'{"type":"text","sessionID":"ses_FAKE123","part":{"type":"text","text":"intermediate"}}\\n\'',
     'printf \'{"type":"text","sessionID":"ses_FAKE123","part":{"type":"text","text":"ok"}}\\n\'',
     "exit 0",
     "",
@@ -478,6 +483,10 @@ const compactLastJob = {
     markText.includes("noReply") && markText.includes('"text":"ok"'),
     "injection carries the run result as context-only text",
   );
+  assert.ok(
+    !markText.includes("intermediate"),
+    "only the final text event is reinjected",
+  );
 }
 
 {
@@ -499,6 +508,40 @@ const compactLastJob = {
   assert.ok(
     recovery.output.includes("retrying with a fresh session"),
     "recovery is logged",
+  );
+  const finished = execSync(`cat ${records}`)
+    .toString()
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l))
+    .filter((l) => l.status !== "running");
+  assert.equal(finished.at(-1).status, "failed");
+  assert.equal(finished.at(-1).exitCode, 1);
+}
+
+{
+  const { mark, records, state, runOnce } = sessionCase("sno_retry", {
+    ...persistJob,
+    slug: "sno_retry",
+  });
+  mkdirSync(join(state, ".."), { recursive: true });
+  writeFileSync(state, "ses_GONE\n");
+  const failure = await runOnce({ FAKE_FAIL: "auth" });
+  assert.equal(failure.code, 1);
+  const markText = execSync(`cat ${mark}`).toString();
+  const runLines = markText
+    .split("\n")
+    .filter((l) => l.startsWith("run args="));
+  assert.equal(runLines.length, 1, "unrelated failures must not retry");
+  assert.ok(runLines[0].includes("--session ses_GONE"));
+  assert.ok(
+    !failure.output.includes("retrying with a fresh session"),
+    "no stale-session recovery is logged",
+  );
+  assert.equal(
+    execSync(`cat ${state}`).toString().trim(),
+    "ses_GONE",
+    "state file is untouched",
   );
   const finished = execSync(`cat ${records}`)
     .toString()

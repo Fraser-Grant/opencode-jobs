@@ -151,6 +151,33 @@ assert.deepEqual(
   {},
 );
 
+// version-qualified entries are recognized: no duplicate on install,
+// removed on uninstall (string and tuple forms)
+const versionedProject = join(work, "versioned");
+mkdirSync(versionedProject);
+writeFileSync(
+  join(versionedProject, "opencode.json"),
+  `${JSON.stringify({ plugin: ["opencode-jobs@1.2.3"] })}\n`,
+);
+const versionedInstall = JSON.parse(runInstall(versionedProject));
+assert.equal(versionedInstall.plugin.status, "present");
+assert.deepEqual(
+  JSON.parse(readFileSync(join(versionedProject, "opencode.json"), "utf8")),
+  { plugin: ["opencode-jobs@1.2.3"] },
+);
+writeFileSync(
+  join(versionedProject, "opencode.json"),
+  `${JSON.stringify({ plugin: [["opencode-jobs@1.2.3", { enabled: false }]] })}\n`,
+);
+const tupleInstall = JSON.parse(runInstall(versionedProject));
+assert.equal(tupleInstall.plugin.status, "present");
+const versionedUninstall = JSON.parse(runUninstall(versionedProject));
+assert.equal(versionedUninstall.plugin.status, "removed");
+assert.deepEqual(
+  JSON.parse(readFileSync(join(versionedProject, "opencode.json"), "utf8")),
+  {},
+);
+
 // uninstall --purge: scheduler data under XDG_CONFIG_HOME and job
 // definitions are removed; registry lookups stay inside the fake home
 const purgeProject = join(work, "purge-project");

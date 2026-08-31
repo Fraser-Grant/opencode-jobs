@@ -56,9 +56,16 @@ function readConfig(configPath: string): Record<string, unknown> | undefined {
   }
 }
 
+function isPackageSpecifier(value: unknown): boolean {
+  return (
+    value === PACKAGE_NAME ||
+    (typeof value === "string" && value.startsWith(`${PACKAGE_NAME}@`))
+  );
+}
+
 function isPackageReference(entry: unknown): boolean {
-  if (entry === PACKAGE_NAME) return true;
-  return Array.isArray(entry) && entry[0] === PACKAGE_NAME;
+  if (typeof entry === "string") return isPackageSpecifier(entry);
+  return Array.isArray(entry) && isPackageSpecifier(entry[0]);
 }
 
 export function installPluginConfig(projectDirectory: string): ConfigInstall {
