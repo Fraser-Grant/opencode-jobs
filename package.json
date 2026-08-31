@@ -1,0 +1,76 @@
+{
+  "name": "opencode-jobs",
+  "version": "0.1.0",
+  "description": "opencode plugin that schedules recurring agent jobs as systemd user timers, with git-committable job definitions, run history, and session continuity",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "opencode-jobs": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin && bun build src/cli.ts --outfile dist/cli.js --target node --format esm && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "format": "prettier --write .",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "check": "prettier --check . && eslint && tsc --noEmit",
+    "smoke": "npm run build && node scripts/smoke.mjs && node scripts/cli-smoke.mjs",
+    "release:patch": "npm version patch && npm publish",
+    "release:minor": "npm version minor && npm publish",
+    "release:major": "npm version major && npm publish"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin",
+    "scheduler",
+    "cron",
+    "jobs",
+    "timers",
+    "systemd",
+    "automation",
+    "agent"
+  ],
+  "author": "Connor Fraser-Grant",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fraser-Grant/opencode-jobs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Fraser-Grant/opencode-jobs/issues"
+  },
+  "homepage": "https://github.com/Fraser-Grant/opencode-jobs#readme",
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.18.18"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.9.0",
+    "eslint-plugin-unicorn": "^73.0.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.67.0"
+  }
+}
