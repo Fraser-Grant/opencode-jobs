@@ -7,6 +7,18 @@ export function configRoot(): string {
   return process.env.XDG_CONFIG_HOME ?? path.join(homedir(), ".config");
 }
 
+export function stateRoot(): string {
+  return process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state");
+}
+
+export function worktreesDirectory(scopeId: string): string {
+  return path.join(stateRoot(), "opencode", "scheduler", "worktrees", scopeId);
+}
+
+export function locksDirectory(scopeId: string): string {
+  return path.join(schedulerDirectory(), "locks", scopeId);
+}
+
 export function schedulerDirectory(): string {
   return path.join(configRoot(), "opencode", "scheduler");
 }

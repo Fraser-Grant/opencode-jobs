@@ -16,7 +16,8 @@ npm run check    # prettier --check . && eslint && tsc --noEmit
 npm run format   # prettier --write .
 npm run build    # bun bundle + tsc declarations (must stay green)
 npm run smoke    # behavioral tests: cron, units, run records, guard,
-                 # session modes (needs systemd-analyze + dash; Node >= 20)
+                 # session modes, worktrees (needs systemd-analyze, dash,
+                 # git; Node >= 20)
 ```
 
 Fix findings properly — never disable a rule or widen a type to silence it.
@@ -32,13 +33,15 @@ eslint-plugin-unicorn recommended.
 - `src/tools.ts` — the nine agent tools (`schedulerTools`).
 - `src/job.ts` / `cron.ts` / `systemd.ts` — job JSON validation, cron
   parsing → OnCalendar, and the systemd unit + POSIX run-script generators
-  (the run script is the heart: run records, session state, compaction).
+  (the run script is the heart: run records, session state, compaction,
+  worktree create/commit/remove).
 - `src/paths.ts` / `registry.ts` / `runs.ts` / `project.ts` / `json.ts` —
-  storage layout, project registry, history parsing, strict JSON guards.
+  storage layout (config for state, XDG state home for worktrees), project
+  registry, history parsing, strict JSON guards.
 - `src/internals.ts` — pure functions re-exported for the smoke harness.
 - `scripts/smoke.mjs` — behavioral smoke test (compiles src, checks
   generated scripts against real `systemd-analyze`, runs them with fake
-  `opencode`/`curl` binaries).
+  `opencode`/`curl` binaries and real git repos for worktree jobs).
 - `scripts/cli-smoke.mjs` — real built-bin install/idempotency/config/package
   smoke coverage.
 - `skill/opencode-jobs/SKILL.md` — project skill copied by the CLI installer.

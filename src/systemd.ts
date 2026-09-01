@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { homedir } from "node:os";
-import { type Job } from "./job.js";
+import { type Job, type WorktreeOptions } from "./job.js";
 import { cronToOnCalendar, parseCron } from "./cron.js";
 import {
   atomicWrite,
@@ -69,6 +69,112 @@ function guardScriptLines(guard: string): string[] {
     '  echo "guard exited $guard_code, skipping run"',
     '  finish skipped "$guard_code"',
     "  exit 0",
+    "fi",
+  ];
+}
+
+function worktreeDefaultRoot(scopeId: string): string {
+  return (
+    "${XDG_STATE_HOME:-$HOME/.local/state}/opencode/scheduler/worktrees/" +
+    scopeId
+  );
+}
+
+function worktreePrologueLines(job: Job, scopeId: string): string[] {
+  const base = job.worktree?.base;
+  return [
+    "wt_enabled=1",
+    'orig_pwd="$(pwd)"',
+    'lock_dir="$config_root/opencode/scheduler/locks/$scope"',
+    'mkdir -p "$lock_dir"',
+    'exec 9>"$lock_dir/$slug.lock"',
+    "if ! flock -n 9; then",
+    '  echo "scheduler: another run of $slug is already active, skipping"',
+    "  finish skipped 0",
+    "  exit 0",
+    "fi",
+    base === undefined
+      ? `wt_root="${worktreeDefaultRoot(scopeId)}"`
+      : `wt_root=${shQuote(base)}`,
+    'if ! mkdir -p "$wt_root"; then',
+    '  echo "scheduler: cannot create worktree base $wt_root"',
+    "  finish failed 1",
+    "  exit 1",
+    "fi",
+    'wt_root="$(cd "$wt_root" && pwd)"',
+    'wt_path="$wt_root/$slug"',
+    'wt_branch="opencode-jobs/$slug/$(date +%Y%m%d-%H%M%S)-$$"',
+    `wt_base_ref=${shQuote(job.worktree?.ref ?? "HEAD")}`,
+    'wt_sub="$(git rev-parse --show-prefix 2>/dev/null)"',
+    'wt_sub="${wt_sub%/}"',
+    'if [ -d "$wt_path" ]; then',
+    '  if git worktree list --porcelain 2>/dev/null | grep -qFx "worktree $wt_path"; then',
+    "    wt_stale_saved=1",
+    '    git -C "$wt_path" add -A >/dev/null 2>&1 || wt_stale_saved=0',
+    '    if [ "$wt_stale_saved" -eq 1 ] && ! git -C "$wt_path" diff --cached --quiet >/dev/null 2>&1; then',
+    '      git -C "$wt_path" -c user.name=opencode-jobs -c user.email=scheduler@opencode.invalid commit --no-gpg-sign -m "opencode-jobs: $slug recovery (stale worktree)" >/dev/null 2>&1 || wt_stale_saved=0',
+    "    fi",
+    '    if [ "$wt_stale_saved" -eq 1 ]; then',
+    '      git worktree remove --force "$wt_path" >/dev/null 2>&1',
+    '      rm -rf "$wt_path"',
+    "    else",
+    '      echo "scheduler: cannot save changes in stale worktree $wt_path; keeping it and aborting this run"',
+    '      wt_branch=""',
+    "      finish failed 1",
+    "      exit 1",
+    "    fi",
+    "  else",
+    '    echo "scheduler: removing unexpected directory at $wt_path"',
+    '    rm -rf "$wt_path"',
+    "  fi",
+    "  git worktree prune >/dev/null 2>&1",
+    "fi",
+    'if ! git worktree add -b "$wt_branch" "$wt_path" "$wt_base_ref"; then',
+    '  echo "scheduler: failed to create worktree $wt_path (worktree jobs require a git repository)"',
+    '  wt_branch=""',
+    "  finish failed 1",
+    "  exit 1",
+    "fi",
+    'if [ -n "$wt_sub" ] && [ ! -d "$wt_path/$wt_sub" ]; then',
+    '  echo "scheduler: project subdirectory $wt_sub is missing from the worktree at $wt_base_ref"',
+    '  git -C "$orig_pwd" worktree remove --force "$wt_path" >/dev/null 2>&1',
+    '  rm -rf "$wt_path"',
+    '  wt_branch=""',
+    "  finish failed 1",
+    "  exit 1",
+    "fi",
+    'if [ -n "$wt_sub" ]; then',
+    '  cd "$wt_path/$wt_sub" || { finish failed 1; exit 1; }',
+    "else",
+    '  cd "$wt_path" || { finish failed 1; exit 1; }',
+    "fi",
+  ];
+}
+
+function worktreeEpilogueLines(options: WorktreeOptions): string[] {
+  const message =
+    options.commitMessage === undefined
+      ? '"opencode-jobs: $slug run $run_id"'
+      : shQuote(options.commitMessage);
+  return [
+    'if [ "$wt_enabled" -eq 1 ]; then',
+    `  wt_msg=${message}`,
+    '  git -C "$wt_path" add -A >/dev/null 2>&1',
+    "  wt_keep=0",
+    '  if ! git -C "$wt_path" diff --cached --quiet >/dev/null 2>&1; then',
+    '    if git -C "$wt_path" -c user.name=opencode-jobs -c user.email=scheduler@opencode.invalid commit --no-gpg-sign -m "$wt_msg" >/dev/null 2>&1; then',
+    '      echo "scheduler: committed worktree changes to branch $wt_branch"',
+    "    else",
+    '      echo "scheduler: worktree commit failed, keeping worktree at $wt_path"',
+    "      wt_keep=1",
+    "    fi",
+    "  fi",
+    '  wt_commit="$(git -C "$wt_path" rev-parse HEAD 2>/dev/null)"',
+    '  if [ "$wt_keep" -eq 0 ]; then',
+    '    cd "$wt_root" 2>/dev/null',
+    '    git -C "$orig_pwd" worktree remove --force "$wt_path" >/dev/null 2>&1 || rm -rf "$wt_path"',
+    '    git -C "$orig_pwd" worktree prune >/dev/null 2>&1',
+    "  fi",
     "fi",
   ];
 }
@@ -202,17 +308,20 @@ export function runScriptContent(
     'run_id="$(date +%s%N)-$$"',
     "started=$(date +%s)",
     'new_session=""',
+    'wt_branch=""',
+    'wt_commit=""',
     'export OPENCODE_PERMISSION=\'{"question":"deny"}\'',
     'export OPENCODE_SCHEDULER_RUN_ID="$run_id"',
     "finish() {",
     '  status="$1"',
     '  code="$2"',
     "  ended=$(date +%s)",
-    String.raw`  printf '{"runId":"%s","slug":"%s","scopeId":"%s","startedAt":%s,"finishedAt":%s,"durationMs":%s,"status":"%s","exitCode":%s,"sessionId":"%s","startedBy":"%s"}\n' "$run_id" "$slug" "$scope" "$started" "$ended" "$((ended - started))" "$status" "$code" "$new_session" "$started_by" >> "$record_file"`,
+    String.raw`  printf '{"runId":"%s","slug":"%s","scopeId":"%s","startedAt":%s,"finishedAt":%s,"durationMs":%s,"status":"%s","exitCode":%s,"sessionId":"%s","startedBy":"%s","worktreeBranch":"%s","worktreeCommit":"%s"}\n' "$run_id" "$slug" "$scope" "$started" "$ended" "$((ended - started))" "$status" "$code" "$new_session" "$started_by" "$wt_branch" "$wt_commit" >> "$record_file"`,
     "}",
     "trap 'finish timeout 124; exit 124' TERM INT",
     ...(job.guard === undefined ? [] : guardScriptLines(job.guard)),
     String.raw`printf '{"runId":"%s","slug":"%s","scopeId":"%s","startedAt":%s,"startedBy":"%s","status":"running"}\n' "$run_id" "$slug" "$scope" "$started" "$started_by" >> "$record_file"`,
+    ...(job.worktree === undefined ? [] : worktreePrologueLines(job, scopeId)),
     `oc_agent=${shQuote(job.run.agent ?? "")}`,
     `oc_model=${shQuote(job.run.model ?? "")}`,
     "prompt" in job.run ? "oc_command_mode=0" : "oc_command_mode=1",
@@ -294,6 +403,7 @@ export function runScriptContent(
         ]
       : ['run_opencode "" 0', "code=$?"]),
     "trap - TERM INT",
+    ...(job.worktree === undefined ? [] : worktreeEpilogueLines(job.worktree)),
     'if [ "$code" -ne 0 ]; then finish failed "$code"; exit "$code"; fi',
     ...(isCompact
       ? ['if [ -n "$new_session" ]; then compact_session "$new_session"; fi']

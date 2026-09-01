@@ -5,7 +5,14 @@
 // Not part of `npm run check` (needs systemd-analyze + dash); run via `npm run smoke`.
 import assert from "node:assert/strict";
 import { execSync, spawn } from "node:child_process";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,6 +48,7 @@ const {
   validateRunSpec,
   validateGuard,
   validateSession,
+  validateWorktree,
 } = internals;
 
 for (const [expr, expected] of [
@@ -119,6 +127,18 @@ assert.equal(validateSession("compact", "x"), "compact");
 assert.equal(validateSession("compact+last", "x"), "compact+last");
 assert.throws(() => validateSession("sometimes", "x"));
 assert.throws(() => validateSession(7, "x"));
+assert.equal(validateWorktree(undefined, "x"), undefined);
+assert.deepEqual(validateWorktree(true, "x"), {});
+assert.deepEqual(validateWorktree({ base: "/tmp/wt" }, "x"), {
+  base: "/tmp/wt",
+});
+assert.deepEqual(
+  validateWorktree({ ref: "origin/main", commitMessage: "save" }, "x"),
+  { ref: "origin/main", commitMessage: "save" },
+);
+assert.throws(() => validateWorktree(false, "x"));
+assert.throws(() => validateWorktree({ base: "" }, "x"));
+assert.throws(() => validateWorktree({ baseX: 1 }, "x"));
 
 const jobFile = join(buildDir, "validated-job.json");
 const validJobDefinition = {
@@ -156,6 +176,22 @@ writeFileSync(
 const invalidRunResult = loadJobFile(jobFile);
 assert.equal(invalidRunResult.ok, false);
 assert.match(invalidRunResult.error, /run\.arguments/);
+
+writeFileSync(
+  jobFile,
+  JSON.stringify({ ...validJobDefinition, worktree: true }),
+);
+const worktreeJobResult = loadJobFile(jobFile);
+assert.equal(worktreeJobResult.ok, true);
+assert.deepEqual(worktreeJobResult.job.worktree, {});
+
+writeFileSync(
+  jobFile,
+  JSON.stringify({ ...validJobDefinition, worktree: { baseX: 1 } }),
+);
+const invalidWorktreeResult = loadJobFile(jobFile);
+assert.equal(invalidWorktreeResult.ok, false);
+assert.match(invalidWorktreeResult.error, /worktree/);
 
 const registryFile = registryPath();
 mkdirSync(dirname(registryFile), { recursive: true });
@@ -632,7 +668,284 @@ const compactLastJob = {
   assert.equal(finished.at(-1).exitCode, 1);
 }
 
+// Worktree jobs: each run gets a fresh git worktree, commits all changes to a
+// per-run branch opencode-jobs/<slug>/…, and removes the worktree. Covers
+// changes, no-changes, failed runs, stale-worktree recovery, custom base and
+// commit message, and the non-repo failure path.
+const wtWork = "/tmp/opencode/opencode-jobs-smoke-worktree";
+rmSync(wtWork, { recursive: true, force: true });
+const wtRepo = join(wtWork, "repo");
+mkdirSync(wtRepo, { recursive: true });
+mkdirSync(join(wtWork, "bin"), { recursive: true });
+execSync("git init -q", { cwd: wtRepo });
+execSync("git config user.email test@example.com", { cwd: wtRepo });
+execSync('git config user.name "Smoke Test"', { cwd: wtRepo });
+writeFileSync(join(wtRepo, "README.md"), "base\n");
+execSync("git add README.md", { cwd: wtRepo });
+execSync("git commit -qm init", { cwd: wtRepo });
+const initSha = execSync("git rev-parse HEAD", { cwd: wtRepo })
+  .toString()
+  .trim();
+writeFileSync(
+  join(wtWork, "bin", "opencode"),
+  [
+    "#!/bin/sh",
+    'echo "fake opencode: $*"',
+    'case "${WT_MODE:-}" in',
+    "  idle) ;;",
+    '  fail) echo "produced by job" > wt-artifact.txt; pwd > pwd-artifact.txt; exit 3 ;;',
+    '  *) echo "produced by job" > wt-artifact.txt; pwd > pwd-artifact.txt ;;',
+    "esac",
+    "exit 0",
+    "",
+  ].join("\n"),
+);
+chmodSync(join(wtWork, "bin", "opencode"), 0o755);
+
+const wtState = join(wtWork, "state");
+const wtXdg = join(wtWork, "xdg");
+const wtOcBin = join(wtWork, "bin", "opencode");
+
+function worktreeCase(slug, jobOverrides = {}) {
+  const job = {
+    slug,
+    name: "Worktree Job",
+    schedule: "0 9 * * *",
+    run: { prompt: "hi" },
+    worktree: {},
+    createdAt: "t",
+    updatedAt: "t",
+    ...jobOverrides,
+  };
+  const scriptPath = join(wtWork, `run-${slug}.sh`);
+  writeFileSync(scriptPath, runScriptContent(job, "wt-scope", wtOcBin));
+  chmodSync(scriptPath, 0o755);
+  execSync(`sh -n ${scriptPath}`);
+  execSync(`dash -n ${scriptPath}`);
+  const recordFile = join(
+    wtXdg,
+    "opencode",
+    "scheduler",
+    "runs",
+    "wt-scope",
+    `${slug}.jsonl`,
+  );
+  const defaultPath = join(
+    wtState,
+    "opencode",
+    "scheduler",
+    "worktrees",
+    "wt-scope",
+    slug,
+  );
+  const runOnce = (env = {}, cwd = wtRepo) =>
+    new Promise((resolve) => {
+      const child = spawn("/bin/sh", [scriptPath], {
+        cwd,
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: wtXdg,
+          XDG_STATE_HOME: wtState,
+          ...env,
+        },
+      });
+      child.on("exit", (code) => resolve(code));
+    });
+  const branches = () =>
+    execSync(
+      `git -C ${wtRepo} for-each-ref --format='%(refname:short)' refs/heads/opencode-jobs/${slug}/`,
+    )
+      .toString()
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0);
+  const readRecords = () =>
+    execSync(`cat ${recordFile}`)
+      .toString()
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((line) => line.status !== "running");
+  return { runOnce, branches, readRecords, defaultPath };
+}
+
+{
+  const { runOnce, branches, readRecords, defaultPath } =
+    worktreeCase("wtchange");
+  assert.equal(await runOnce(), 0);
+  assert.ok(!existsSync(defaultPath), "worktree must be removed after the run");
+  assert.equal(branches().length, 1);
+  const [branch] = branches();
+  assert.match(branch, /^opencode-jobs\/wtchange\/[\d-]+-\d+$/);
+  execSync(`git -C ${wtRepo} cat-file -e ${branch}:wt-artifact.txt`);
+  const records = readRecords();
+  assert.equal(records.at(-1).status, "success");
+  assert.equal(records.at(-1).worktreeBranch, branch);
+  assert.equal(
+    records.at(-1).worktreeCommit,
+    execSync(`git -C ${wtRepo} rev-parse ${branch}`).toString().trim(),
+  );
+  assert.equal(execSync(`git -C ${wtRepo} status --porcelain`).toString(), "");
+  assert.ok(
+    !existsSync(join(wtRepo, "${XDG_STATE_HOME:-$HOME")),
+    "worktree base must expand XDG_STATE_HOME, not a literal name",
+  );
+  assert.ok(
+    existsSync(join(wtState, "opencode", "scheduler", "worktrees", "wt-scope")),
+    "worktree base must live under XDG_STATE_HOME",
+  );
+}
+
+{
+  const { runOnce, branches, readRecords, defaultPath } =
+    worktreeCase("wtidle");
+  assert.equal(await runOnce({ WT_MODE: "idle" }), 0);
+  assert.ok(!existsSync(defaultPath), "worktree must be removed");
+  const [branch] = branches();
+  assert.equal(
+    execSync(`git -C ${wtRepo} rev-list --count ${branch}`).toString().trim(),
+    "1",
+    "no changes must mean no extra commit",
+  );
+  const records = readRecords();
+  assert.equal(records.at(-1).status, "success");
+  assert.equal(records.at(-1).worktreeCommit, initSha);
+}
+
+{
+  const { runOnce, branches, readRecords, defaultPath } =
+    worktreeCase("wtfail");
+  assert.equal(await runOnce({ WT_MODE: "fail" }), 3);
+  assert.ok(!existsSync(defaultPath), "failed run must still clean up");
+  const [branch] = branches();
+  execSync(`git -C ${wtRepo} cat-file -e ${branch}:wt-artifact.txt`);
+  const records = readRecords();
+  assert.equal(records.at(-1).status, "failed");
+  assert.equal(records.at(-1).exitCode, 3);
+  assert.equal(records.at(-1).worktreeBranch, branch);
+}
+
+{
+  const { runOnce, branches, readRecords, defaultPath } =
+    worktreeCase("wtstale");
+  execSync(
+    `git -C ${wtRepo} worktree add -b opencode-jobs/wtstale/stale ${defaultPath}`,
+  );
+  writeFileSync(join(defaultPath, "abandoned.txt"), "salvage me\n");
+  assert.equal(await runOnce({ WT_MODE: "idle" }), 0);
+  assert.ok(!existsSync(defaultPath), "stale worktree must be cleaned");
+  const recovery = execSync(
+    `git -C ${wtRepo} show --format=%s --name-only opencode-jobs/wtstale/stale`,
+  ).toString();
+  assert.match(recovery, /recovery/);
+  assert.match(recovery, /abandoned\.txt/);
+  assert.equal(branches().length, 2, "stale branch kept plus new run branch");
+  assert.equal(readRecords().at(-1).status, "success");
+}
+
+{
+  const base = join(wtWork, "custom-base");
+  const { runOnce, branches, readRecords } = worktreeCase("wtbase", {
+    worktree: { base, commitMessage: "custom save" },
+  });
+  assert.equal(await runOnce(), 0);
+  assert.ok(!existsSync(join(base, "wtbase")), "custom base cleaned");
+  const [branch] = branches();
+  assert.equal(
+    execSync(`git -C ${wtRepo} log -1 --format=%s ${branch}`).toString().trim(),
+    "custom save",
+  );
+  assert.equal(readRecords().at(-1).status, "success");
+}
+
+{
+  const { runOnce, readRecords } = worktreeCase("wtnogit");
+  const notRepo = join(wtWork, "notrepo");
+  mkdirSync(notRepo, { recursive: true });
+  assert.equal(await runOnce({}, notRepo), 1);
+  const records = readRecords();
+  assert.equal(records.at(-1).status, "failed");
+  assert.equal(records.at(-1).worktreeBranch, "");
+}
+
+{
+  const { runOnce, readRecords } = worktreeCase("wtlock");
+  const lockDir = join(wtXdg, "opencode", "scheduler", "locks", "wt-scope");
+  mkdirSync(lockDir, { recursive: true });
+  const holder = spawn("flock", [join(lockDir, "wtlock.lock"), "sleep", "2"]);
+  await sleep(300);
+  assert.equal(await runOnce(), 0, "locked-out run must exit 0");
+  const locked = readRecords();
+  assert.equal(locked.at(-1).status, "skipped");
+  await new Promise((resolve) => {
+    holder.on("exit", resolve);
+  });
+  assert.equal(await runOnce(), 0, "run must succeed after the lock releases");
+  assert.equal(readRecords().at(-1).status, "success");
+}
+
+const monoRepo = join(wtWork, "monorepo");
+mkdirSync(join(monoRepo, "packages", "app"), { recursive: true });
+execSync("git init -q", { cwd: monoRepo });
+execSync("git config user.email test@example.com", { cwd: monoRepo });
+execSync('git config user.name "Smoke Test"', { cwd: monoRepo });
+writeFileSync(join(monoRepo, "packages", "app", "hello.txt"), "hi\n");
+execSync("git add .", { cwd: monoRepo });
+execSync("git commit -qm init", { cwd: monoRepo });
+{
+  const { runOnce, defaultPath } = worktreeCase("wtsub");
+  assert.equal(
+    await runOnce({}, join(monoRepo, "packages", "app")),
+    0,
+    "subdir project must run in its worktree subdirectory",
+  );
+  assert.ok(!existsSync(defaultPath), "worktree removed");
+  const branch = execSync(
+    `git -C ${monoRepo} for-each-ref --format='%(refname:short)' refs/heads/opencode-jobs/wtsub/`,
+  )
+    .toString()
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .at(0);
+  assert.ok(branch, "subdir run must leave a branch");
+  assert.equal(
+    execSync(`git -C ${monoRepo} show ${branch}:packages/app/pwd-artifact.txt`)
+      .toString()
+      .trim(),
+    join(defaultPath, "packages", "app"),
+    "the job must run inside the matching project subdirectory",
+  );
+}
+
+{
+  const { runOnce, readRecords, defaultPath } = worktreeCase("wtfailrecover");
+  execSync(
+    `git -C ${wtRepo} worktree add -b opencode-jobs/wtfailrecover/stale ${defaultPath}`,
+  );
+  writeFileSync(join(defaultPath, "abandoned.txt"), "keep me\n");
+  const preCommit = join(wtRepo, ".git", "hooks", "pre-commit");
+  writeFileSync(preCommit, "#!/bin/sh\nexit 1\n");
+  chmodSync(preCommit, 0o755);
+  assert.equal(await runOnce({ WT_MODE: "idle" }), 1);
+  assert.ok(
+    existsSync(join(defaultPath, "abandoned.txt")),
+    "unsavable stale worktree must be kept",
+  );
+  const blocked = readRecords();
+  assert.equal(blocked.at(-1).status, "failed");
+  assert.equal(blocked.at(-1).worktreeBranch, "");
+  rmSync(preCommit);
+  assert.equal(
+    await runOnce({ WT_MODE: "idle" }),
+    0,
+    "run must recover once the hook allows the recovery commit",
+  );
+  assert.ok(!existsSync(defaultPath), "stale worktree cleaned after recovery");
+  assert.equal(readRecords().at(-1).status, "success");
+}
+
 console.log(
-  `cron ok, quoting ok, units verified, run records ok (${lines.length} lines), guard ok, session modes ok`,
+  `cron ok, quoting ok, units verified, run records ok (${lines.length} lines), guard ok, session modes ok, worktrees ok`,
 );
 console.log("SMOKE_OK");

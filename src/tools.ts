@@ -25,6 +25,7 @@ import {
   slugify,
   timerUnit,
   unitBase,
+  worktreesDirectory,
 } from "./paths.js";
 import {
   type Job,
@@ -35,6 +36,7 @@ import {
   validateRunSpec,
   validateSession,
   validateTimeout,
+  validateWorktree,
 } from "./job.js";
 import { loadRegistry, registryEntry, saveRegistry } from "./registry.js";
 import {
@@ -113,6 +115,10 @@ interface ScheduleJobInput {
   arguments?: string | undefined;
   session?: string | undefined;
   guard?: string | undefined;
+  worktree?: boolean | undefined;
+  worktreeBase?: string | undefined;
+  worktreeRef?: string | undefined;
+  worktreeCommitMessage?: string | undefined;
   agent?: string | undefined;
   model?: string | undefined;
   timeoutSeconds?: number | undefined;
@@ -130,9 +136,19 @@ function scheduleJobOutput(
   } catch (error) {
     return fail(errorMessage(error));
   }
+  const hasWorktreeOptions =
+    input.worktreeBase !== undefined ||
+    input.worktreeRef !== undefined ||
+    input.worktreeCommitMessage !== undefined;
+  if (hasWorktreeOptions && input.worktree !== true) {
+    return fail(
+      "set worktree: true to enable worktree options (worktreeBase, worktreeRef, worktreeCommitMessage)",
+    );
+  }
   let run: Job["run"];
   let session: Job["session"] | "new";
   let guard: string | undefined;
+  let worktree: Job["worktree"];
   let timeoutSeconds: number | undefined;
   try {
     run = validateRunSpec(
@@ -147,6 +163,22 @@ function scheduleJobOutput(
     );
     session = validateSession(input.session, "job");
     guard = validateGuard(input.guard, "job");
+    worktree = validateWorktree(
+      input.worktree === true
+        ? {
+            ...(input.worktreeBase !== undefined && {
+              base: input.worktreeBase,
+            }),
+            ...(input.worktreeRef !== undefined && {
+              ref: input.worktreeRef,
+            }),
+            ...(input.worktreeCommitMessage !== undefined && {
+              commitMessage: input.worktreeCommitMessage,
+            }),
+          }
+        : undefined,
+      "job",
+    );
     timeoutSeconds = validateTimeout(input.timeoutSeconds, "job");
   } catch (error) {
     return fail(errorMessage(error));
@@ -162,6 +194,7 @@ function scheduleJobOutput(
     run,
     ...(session !== "new" && { session }),
     ...(guard !== undefined && { guard }),
+    ...(worktree !== undefined && { worktree }),
     ...(timeoutSeconds !== undefined && { timeoutSeconds }),
     createdAt: existing.ok ? existing.job.createdAt : nowIso(),
     updatedAt: nowIso(),
@@ -173,6 +206,10 @@ function scheduleJobOutput(
     `Definition: ${relativePath} (${job.schedule} — ${describeCron(sets)})`,
   ];
   if (session !== "new") lines.push(`Session: ${session}`);
+  if (worktree !== undefined)
+    lines.push(
+      `Worktree: yes (base ${worktree.base ?? "default"}, branch opencode-jobs/${slug}/<run>)`,
+    );
   const entry = registryEntry(directory);
   if (entry === undefined) {
     lines.push(
@@ -241,6 +278,12 @@ function showJobOutput(slugInput: string, directory: string): ToolResult {
   ];
   if (job.guard !== undefined)
     lines.push(`Guard: ${job.guard} (must exit 0 for the run to start)`);
+  if (job.worktree !== undefined) {
+    const base = job.worktree.base ?? worktreesDirectory(scopeId);
+    lines.push(
+      `Worktree: fresh per run at ${base} (from ${job.worktree.ref ?? "HEAD"}) — changes are committed to opencode-jobs/${job.slug}/… before the worktree is removed`,
+    );
+  }
   if (job.session !== undefined) {
     const state = sessionStateFile(scopeId, job.slug);
     const sessionId = existsSync(state)
@@ -433,6 +476,28 @@ const scheduleJobTool = tool({
       .optional()
       .describe(
         'Shell command run before the job; the run only starts if it exits 0, otherwise it is recorded as skipped (applies to run_job too). E.g. "! git diff --quiet" to run only when the repo has changes',
+      ),
+    worktree: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Run the job in a fresh git worktree instead of the project checkout: the worktree is created from worktreeRef (default HEAD), the job runs inside it, all changes are committed to a per-run branch opencode-jobs/<slug>/…, and the worktree is removed afterwards (kept if the safety commit fails). Requires the project to be a git repository",
+      ),
+    worktreeBase: tool.schema
+      .string()
+      .optional()
+      .describe(
+        "Parent directory for the worktree (default: ~/.local/state/opencode/scheduler/worktrees/<scopeId>/<slug>). Relative paths resolve against the project directory; it should be dedicated to scheduler worktrees",
+      ),
+    worktreeRef: tool.schema
+      .string()
+      .optional()
+      .describe('Git ref the worktree branch starts from (default: "HEAD")'),
+    worktreeCommitMessage: tool.schema
+      .string()
+      .optional()
+      .describe(
+        'Commit message used when saving worktree changes (default: "opencode-jobs: <slug> run <runId>")',
       ),
     agent: tool.schema.string().optional().describe("Agent to use for the run"),
     model: tool.schema.string().optional().describe("Model to use for the run"),

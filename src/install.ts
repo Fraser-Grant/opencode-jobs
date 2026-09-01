@@ -1,13 +1,16 @@
 import { existsSync, readFileSync, rmSync, rmdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { z } from "zod";
 import {
   atomicWrite,
   deriveScopeId,
+  locksDirectory,
   logDirectory,
   runsDirectory,
   scopeDirectory,
   sessionStateDirectory,
+  worktreesDirectory,
 } from "./paths.js";
 import { disableProject } from "./project.js";
 import { registryEntry } from "./registry.js";
@@ -239,6 +242,8 @@ export function purgeProjectData(projectDirectory: string): PurgeResult {
     runsDirectory(scopeId),
     sessionStateDirectory(scopeId),
     logDirectory(scopeId),
+    locksDirectory(scopeId),
+    worktreesDirectory(scopeId),
     path.join(abs, ".opencode", "scheduler"),
   ];
   const paths: string[] = [];
@@ -246,6 +251,9 @@ export function purgeProjectData(projectDirectory: string): PurgeResult {
     if (!existsSync(target)) continue;
     rmSync(target, { recursive: true, force: true });
     paths.push(target);
+  }
+  if (paths.includes(worktreesDirectory(scopeId))) {
+    spawnSync("git", ["-C", abs, "worktree", "prune"], { stdio: "ignore" });
   }
   removeDirectoryIfEmpty(path.join(abs, ".opencode"));
   return { paths };

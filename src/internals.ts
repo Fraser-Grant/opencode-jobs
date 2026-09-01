@@ -2,7 +2,12 @@
 // Not imported by the plugin entry point.
 import { deriveScopeId, shQuote, slugify } from "./paths.js";
 import { cronToOnCalendar, describeCron, parseCron } from "./cron.js";
-import { validateGuard, validateRunSpec, validateSession } from "./job.js";
+import {
+  validateGuard,
+  validateRunSpec,
+  validateSession,
+  validateWorktree,
+} from "./job.js";
 import {
   buildOpencodeArguments,
   runScriptContent,
@@ -20,6 +25,7 @@ export const internals = {
   validateRunSpec,
   validateGuard,
   validateSession,
+  validateWorktree,
   buildOpencodeArguments,
   runScriptContent,
   serviceContent,
