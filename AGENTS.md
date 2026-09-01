@@ -30,7 +30,7 @@ eslint-plugin-unicorn recommended.
 - `src/cli.ts` / `install.ts` — global npm CLI (`install`, `uninstall
   [--purge]`) and idempotent project wiring for the package config entry and
   bundled skill.
-- `src/tools.ts` — the nine agent tools (`schedulerTools`).
+- `src/tools.ts` — the nine agent tools (`jobsTools`).
 - `src/job.ts` / `cron.ts` / `systemd.ts` — job JSON validation, cron
   parsing → OnCalendar, and the systemd unit + POSIX run-script generators
   (the run script is the heart: run records, session state, compaction,

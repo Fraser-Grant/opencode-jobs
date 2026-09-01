@@ -7,13 +7,13 @@ compatibility: opencode on Linux with systemd
 
 # OpenCode Jobs
 
-Use the `opencode-jobs` tools instead of editing systemd units or global
-scheduler state directly.
+Use the `opencode-jobs` tools instead of editing systemd units or global job
+state directly.
 
 ## Workflow
 
 1. Create or update a definition with `schedule_job`. Definitions belong in
-   `.opencode/scheduler/jobs/<slug>.json` and should be committed with the
+   `.opencode/jobs/<slug>.json` and should be committed with the
    project.
 2. Inspect definitions with `list_jobs` or `get_job`.
 3. Run `enable_project` after the first job is created. Run it again to
@@ -36,7 +36,7 @@ scheduler state directly.
 - A `guard` is a shell command that must exit zero for the job to run.
 - Set `worktree: true` when the job should not touch the user's checkout:
   each run gets a fresh git worktree (default base
-  `~/.local/state/opencode/scheduler/worktrees/…`, override with
+  `~/.local/state/opencode/jobs/worktrees/…`, override with
   `worktree.base`), all changes are committed to a per-run branch
   `opencode-jobs/<slug>/…`, and the worktree is removed. Overlapping runs
   of the same job are skipped via a lock; subdirectory projects run in

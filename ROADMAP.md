@@ -10,16 +10,16 @@ actually committed.
 - Automate versioning, changelog generation, GitHub releases, and npm
   publication without long-lived credentials.
 - Require CI and behavioral smoke coverage for every behavior change.
-- Keep job definitions and persisted scheduler state strictly validated while
+- Keep job definitions and persisted job state strictly validated while
   preserving deliberate recovery from partial history corruption.
 
 ## Next: operational confidence
 
 - Turn repeated support or dogfooding failures into reproducible smoke cases.
 - Improve diagnostics for skipped, failed, timed-out, and recovered runs before
-  adding scheduler surface area.
-- Define compatibility and migration policy before changing persisted job,
-  registry, run-history, or session-state formats.
+  adding scheduling surface area.
+- Apply the compatibility and migration policy whenever changing persisted
+  job, registry, run-history, or session-state formats.
 
 ## Later: evidence-led expansion
 

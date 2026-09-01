@@ -292,7 +292,7 @@ const records = join(
   work,
   "xdg",
   "opencode",
-  "scheduler",
+  "jobs",
   "runs",
   "smoke-scope",
   "smoke.jsonl",
@@ -346,7 +346,7 @@ const guardRecords = join(
   work,
   "xdg",
   "opencode",
-  "scheduler",
+  "jobs",
   "runs",
   "guard-scope",
   "gsmoke.jsonl",
@@ -459,7 +459,7 @@ function sessionCase(slug, job) {
   const records = join(
     xdg,
     "opencode",
-    "scheduler",
+    "jobs",
     "runs",
     `sess-${slug}`,
     `${slug}.jsonl`,
@@ -467,7 +467,7 @@ function sessionCase(slug, job) {
   const state = join(
     xdg,
     "opencode",
-    "scheduler",
+    "jobs",
     "sessions",
     `sess-${slug}`,
     `${slug}.txt`,
@@ -725,7 +725,7 @@ function worktreeCase(slug, jobOverrides = {}) {
   const recordFile = join(
     wtXdg,
     "opencode",
-    "scheduler",
+    "jobs",
     "runs",
     "wt-scope",
     `${slug}.jsonl`,
@@ -733,7 +733,7 @@ function worktreeCase(slug, jobOverrides = {}) {
   const defaultPath = join(
     wtState,
     "opencode",
-    "scheduler",
+    "jobs",
     "worktrees",
     "wt-scope",
     slug,
@@ -791,7 +791,7 @@ function worktreeCase(slug, jobOverrides = {}) {
     "worktree base must expand XDG_STATE_HOME, not a literal name",
   );
   assert.ok(
-    existsSync(join(wtState, "opencode", "scheduler", "worktrees", "wt-scope")),
+    existsSync(join(wtState, "opencode", "jobs", "worktrees", "wt-scope")),
     "worktree base must live under XDG_STATE_HOME",
   );
 }
@@ -870,7 +870,7 @@ function worktreeCase(slug, jobOverrides = {}) {
 
 {
   const { runOnce, readRecords } = worktreeCase("wtlock");
-  const lockDir = join(wtXdg, "opencode", "scheduler", "locks", "wt-scope");
+  const lockDir = join(wtXdg, "opencode", "jobs", "locks", "wt-scope");
   mkdirSync(lockDir, { recursive: true });
   const holder = spawn("flock", [join(lockDir, "wtlock.lock"), "sleep", "2"]);
   await sleep(300);

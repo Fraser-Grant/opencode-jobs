@@ -29,17 +29,21 @@ const registryFileSchema = z.object({
   projects: z.record(z.string(), z.unknown()),
 });
 
+export function readRegistryFile(file: string): Registry {
+  const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+  const result = registryFileSchema.safeParse(parsed);
+  if (!result.success) throw new Error(`Invalid job registry: ${file}`);
+  const projects: Record<string, RegistryEntry> = {};
+  for (const [key, value] of Object.entries(result.data.projects)) {
+    const entry = registryEntrySchema.safeParse(value);
+    if (entry.success) projects[key] = entry.data;
+  }
+  return { version: 1, projects };
+}
+
 export function loadRegistry(): Registry {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(registryPath(), "utf8"));
-    const result = registryFileSchema.safeParse(parsed);
-    if (!result.success) return { version: 1, projects: {} };
-    const projects: Record<string, RegistryEntry> = {};
-    for (const [key, value] of Object.entries(result.data.projects)) {
-      const entry = registryEntrySchema.safeParse(value);
-      if (entry.success) projects[key] = entry.data;
-    }
-    return { version: 1, projects };
+    return readRegistryFile(registryPath());
   } catch {
     // Missing or unreadable registry: start fresh.
     return { version: 1, projects: {} };

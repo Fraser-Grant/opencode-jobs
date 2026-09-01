@@ -12,27 +12,27 @@ export function stateRoot(): string {
 }
 
 export function worktreesDirectory(scopeId: string): string {
-  return path.join(stateRoot(), "opencode", "scheduler", "worktrees", scopeId);
+  return path.join(stateRoot(), "opencode", "jobs", "worktrees", scopeId);
 }
 
 export function locksDirectory(scopeId: string): string {
-  return path.join(schedulerDirectory(), "locks", scopeId);
+  return path.join(jobsStateDirectory(), "locks", scopeId);
 }
 
-export function schedulerDirectory(): string {
-  return path.join(configRoot(), "opencode", "scheduler");
+export function jobsStateDirectory(): string {
+  return path.join(configRoot(), "opencode", "jobs");
 }
 
 export function registryPath(): string {
-  return path.join(schedulerDirectory(), "registry.json");
+  return path.join(jobsStateDirectory(), "registry.json");
 }
 
 export function scopeDirectory(scopeId: string): string {
-  return path.join(schedulerDirectory(), "scopes", scopeId);
+  return path.join(jobsStateDirectory(), "scopes", scopeId);
 }
 
 export function runsDirectory(scopeId: string): string {
-  return path.join(schedulerDirectory(), "runs", scopeId);
+  return path.join(jobsStateDirectory(), "runs", scopeId);
 }
 
 export function runsFile(scopeId: string, slug: string): string {
@@ -40,7 +40,7 @@ export function runsFile(scopeId: string, slug: string): string {
 }
 
 export function sessionStateDirectory(scopeId: string): string {
-  return path.join(schedulerDirectory(), "sessions", scopeId);
+  return path.join(jobsStateDirectory(), "sessions", scopeId);
 }
 
 export function sessionStateFile(scopeId: string, slug: string): string {
@@ -48,7 +48,7 @@ export function sessionStateFile(scopeId: string, slug: string): string {
 }
 
 export function logDirectory(scopeId: string): string {
-  return path.join(configRoot(), "opencode", "logs", "scheduler", scopeId);
+  return path.join(configRoot(), "opencode", "logs", "jobs", scopeId);
 }
 
 export function logFile(scopeId: string, slug: string): string {
@@ -60,7 +60,7 @@ export function systemdUserDirectory(): string {
 }
 
 export function jobsDirectory(workdir: string): string {
-  return path.join(workdir, ".opencode", "scheduler", "jobs");
+  return path.join(workdir, ".opencode", "jobs");
 }
 
 export function unitBase(scopeId: string, slug: string): string {

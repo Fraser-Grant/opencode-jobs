@@ -14,6 +14,7 @@ import {
 } from "./paths.js";
 import { disableProject } from "./project.js";
 import { registryEntry } from "./registry.js";
+import { migrateStorage, type StorageMigration } from "./migration.js";
 
 export const PACKAGE_NAME = "opencode-jobs";
 export const SKILL_NAME = "opencode-jobs";
@@ -36,6 +37,7 @@ export interface ProjectInstall {
   projectDirectory: string;
   plugin: ConfigInstall;
   skill: SkillInstall;
+  migration?: StorageMigration;
 }
 
 const CONFIG_LOCATIONS = [
@@ -143,10 +145,12 @@ export function installProject(
   ) {
     throw new Error(`Project directory does not exist: ${resolvedProject}`);
   }
+  const migration = migrateStorage(resolvedProject, true);
   return {
     projectDirectory: resolvedProject,
     plugin: installPluginConfig(resolvedProject),
     skill: installSkill(resolvedProject, packageDirectory),
+    ...(migration.moved.length > 0 && { migration }),
   };
 }
 
@@ -169,6 +173,7 @@ export interface ProjectUninstall {
   plugin: ConfigUninstall;
   skill: SkillUninstall;
   purge?: PurgeResult;
+  migration?: StorageMigration;
 }
 
 function removeDirectoryIfEmpty(directory: string): void {
@@ -244,7 +249,7 @@ export function purgeProjectData(projectDirectory: string): PurgeResult {
     logDirectory(scopeId),
     locksDirectory(scopeId),
     worktreesDirectory(scopeId),
-    path.join(abs, ".opencode", "scheduler"),
+    path.join(abs, ".opencode", "jobs"),
   ];
   const paths: string[] = [];
   for (const target of targets) {
@@ -271,6 +276,7 @@ export function uninstallProject(
   ) {
     throw new Error(`Project directory does not exist: ${resolvedProject}`);
   }
+  const migration = migrateStorage(resolvedProject, false);
   const wasEnabled = registryEntry(resolvedProject) !== undefined;
   if (wasEnabled) disableProject(resolvedProject);
   const uninstall: ProjectUninstall = {
@@ -278,6 +284,7 @@ export function uninstallProject(
     disabled: wasEnabled,
     plugin: uninstallPluginConfig(resolvedProject),
     skill: uninstallSkill(resolvedProject, packageDirectory),
+    ...(migration.moved.length > 0 && { migration }),
   };
   if (shouldPurge) uninstall.purge = purgeProjectData(resolvedProject);
   return uninstall;

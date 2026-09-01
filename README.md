@@ -36,7 +36,7 @@ and reports the manual change required.
 
 Job files are committed agent prompts that run on your machine on a
 schedule — only install and enable projects whose
-`.opencode/scheduler/jobs/` you trust, the same care you would take before
+`.opencode/jobs/` you trust, the same care you would take before
 running an unfamiliar repository's build.
 
 Alternatively, add the package manually to the project root `opencode.json`
@@ -67,7 +67,7 @@ the uninstaller cannot rewrite safely is left untouched with a non-zero
 exit. Job definitions, run history, session state, and logs are kept.
 
 Add `--purge` to also delete the project's job definitions
-(`.opencode/scheduler/`) and its scheduler data (run scripts, run history,
+(`.opencode/jobs/`) and its job data (run scripts, run history,
 session state, run locks, worktrees, and logs):
 
 ```sh
@@ -101,7 +101,7 @@ can also be used from setup scripts and CI.
 
 ## Job definitions
 
-Jobs live in your repo at `.opencode/scheduler/jobs/<slug>.json` — review
+Jobs live in your repo at `.opencode/jobs/<slug>.json` — review
 them in PRs like any other code:
 
 ```json
@@ -179,9 +179,9 @@ Each run:
 
 If the safety commit fails, the worktree is kept on disk rather than
 discarded. The default base is
-`~/.local/state/opencode/scheduler/worktrees/<scopeId>/<slug>` (respecting
+`~/.local/state/opencode/jobs/worktrees/<scopeId>/<slug>` (respecting
 `XDG_STATE_HOME`); override with `base` (relative paths resolve against the
-project directory, and the base should be dedicated to scheduler worktrees).
+project directory, and the base should be dedicated to job worktrees).
 Worktree jobs require `git` and a git repository — a missing repo fails the
 run with a clear record. Branches accumulate per run by design; merge or
 delete them when you no longer need the work.
@@ -204,29 +204,39 @@ delete them when you no longer need the work.
 
 ## Storage
 
-| What                | Where                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| Job definitions     | `<project>/.opencode/scheduler/jobs/<slug>.json` (git-committed)                        |
-| Run scripts         | `~/.config/opencode/scheduler/scopes/<scopeId>/run-<slug>.sh`                           |
-| Run history (JSONL) | `~/.config/opencode/scheduler/runs/<scopeId>/<slug>.jsonl`                              |
-| Session state       | `~/.config/opencode/scheduler/sessions/<scopeId>/<slug>.txt`                            |
-| Run locks           | `~/.config/opencode/scheduler/locks/<scopeId>/<slug>.lock` (worktree jobs)              |
-| Job worktrees       | `~/.local/state/opencode/scheduler/worktrees/<scopeId>/<slug>` (removed after each run) |
-| Job logs            | `~/.config/opencode/logs/scheduler/<scopeId>/<slug>.log`                                |
-| Project registry    | `~/.config/opencode/scheduler/registry.json`                                            |
-| systemd units       | `~/.config/systemd/user/opencode-sched-<scope>-<slug>.{service,timer}`                  |
+| What                | Where                                                                         |
+| ------------------- | ----------------------------------------------------------------------------- |
+| Job definitions     | `<project>/.opencode/jobs/<slug>.json` (git-committed)                        |
+| Run scripts         | `~/.config/opencode/jobs/scopes/<scopeId>/run-<slug>.sh`                      |
+| Run history (JSONL) | `~/.config/opencode/jobs/runs/<scopeId>/<slug>.jsonl`                         |
+| Session state       | `~/.config/opencode/jobs/sessions/<scopeId>/<slug>.txt`                       |
+| Run locks           | `~/.config/opencode/jobs/locks/<scopeId>/<slug>.lock` (worktree jobs)         |
+| Job worktrees       | `~/.local/state/opencode/jobs/worktrees/<scopeId>/<slug>` (removed after run) |
+| Job logs            | `~/.config/opencode/logs/jobs/<scopeId>/<slug>.log`                           |
+| Project registry    | `~/.config/opencode/jobs/registry.json`                                       |
+| systemd units       | `~/.config/systemd/user/opencode-sched-<scope>-<slug>.{service,timer}`        |
 
 `scopeId` is a stable hash of the project path, so multiple projects can
 define jobs without colliding. Because it is path-derived, moving or renaming
 a project directory orphans its units, history, and registry entry — run
 `opencode-jobs uninstall --purge` from the old path before moving, or clean
-up `~/.config/opencode/scheduler/` (and the unit files) manually afterwards.
+up `~/.config/opencode/jobs/` (and the unit files) manually afterwards.
+
+### Upgrading storage
+
+When the plugin or CLI first runs after an upgrade, it moves legacy 0.1.x
+definitions and state to the paths above, preserving the registry, run history,
+session state, logs, locks, and worktrees. Enabled projects are re-synced so
+their existing systemd units use the new paths. Migration is idempotent and
+refuses to overwrite a new path when both old and new data exist; reconcile or
+back up one side and retry.
 
 ## Configuration
 
-- `OPENCODE_SCHEDULER_OPENCODE_PATH` — absolute path to the `opencode`
+- `OPENCODE_JOBS_OPENCODE_PATH` — absolute path to the `opencode`
   binary the run scripts invoke (default: resolved from `PATH`, then
   `~/.opencode/bin/opencode`, then common install locations).
+  `OPENCODE_SCHEDULER_OPENCODE_PATH` remains accepted for 0.1.x compatibility.
 
 ## Requirements
 

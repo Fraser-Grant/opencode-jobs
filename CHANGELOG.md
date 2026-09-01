@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- Job definitions and persisted state move from legacy `scheduler` paths to
+  `.opencode/jobs/`, `~/.config/opencode/jobs/`, and
+  `~/.local/state/opencode/jobs/`. The plugin and CLI migrate 0.1.x data
+  automatically, preserve the registry and run/session history, and re-sync
+  enabled projects without changing their existing systemd unit names.
+
 ## [0.2.0](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v0.1.2...opencode-jobs-v0.2.0) (2026-09-01)
 
 ### Features

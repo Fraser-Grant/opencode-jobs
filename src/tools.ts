@@ -200,7 +200,7 @@ function scheduleJobOutput(
     updatedAt: nowIso(),
   };
   saveJob(directory, job);
-  const relativePath = `.opencode/scheduler/jobs/${slug}.json`;
+  const relativePath = `.opencode/jobs/${slug}.json`;
   const lines = [
     `${existing.ok ? "Updated" : "Created"} job "${job.name}" (${slug})`,
     `Definition: ${relativePath} (${job.schedule} — ${describeCron(sets)})`,
@@ -273,7 +273,7 @@ function showJobOutput(slugInput: string, directory: string): ToolResult {
   const lines = [
     `${job.name} (${job.slug})`,
     `Schedule: ${job.schedule} — ${describeCron(sets)}`,
-    `Definition: .opencode/scheduler/jobs/${job.slug}.json (updated ${job.updatedAt})`,
+    `Definition: .opencode/jobs/${job.slug}.json (updated ${job.updatedAt})`,
     `Run: ${runDesc}`,
   ];
   if (job.guard !== undefined)
@@ -330,9 +330,7 @@ function removeJobDefinitionOutput(
   if (!existsSync(file))
     return fail(`No job "${slug}" in ${jobsDirectory(directory)}`);
   rmSync(file);
-  const lines = [
-    `Deleted job definition .opencode/scheduler/jobs/${slug}.json`,
-  ];
+  const lines = [`Deleted job definition .opencode/jobs/${slug}.json`];
   const scopeId = registryEntry(directory)?.scopeId ?? deriveScopeId(directory);
   const state = sessionStateFile(scopeId, slug);
   if (existsSync(state)) {
@@ -387,7 +385,7 @@ function runJobNowOutput(slugInput: string, directory: string): ToolResult {
   const fd = openSync(log, "a");
   const child = spawn("/bin/sh", [script], {
     cwd: path.resolve(directory),
-    env: { ...process.env, OPENCODE_SCHEDULER_STARTED_BY: "manual" },
+    env: { ...process.env, OPENCODE_JOBS_STARTED_BY: "manual" },
     stdio: ["ignore", fd, fd],
   });
   child.unref();
@@ -424,7 +422,7 @@ function listProjectsOutput(): ToolResult {
   );
   if (entries.length === 0)
     return ok("No projects with scheduled jobs are registered.");
-  const lines = ["Registry: ~/.config/opencode/scheduler/registry.json"];
+  const lines = ["Registry: ~/.config/opencode/jobs/registry.json"];
   for (const entry of entries) {
     const missing = existsSync(entry.workdir) ? "" : " [WORKDIR MISSING]";
     lines.push(
@@ -437,7 +435,7 @@ function listProjectsOutput(): ToolResult {
 
 const listJobsTool = tool({
   description:
-    "List scheduled job definitions for the current project (from .opencode/scheduler/jobs/), including enabled state, next run, and last run status.",
+    "List scheduled job definitions for the current project (from .opencode/jobs/), including enabled state, next run, and last run status.",
   args: {},
   execute: (_input, context) =>
     Promise.resolve(listJobsOutput(context.directory)),
@@ -445,7 +443,7 @@ const listJobsTool = tool({
 
 const scheduleJobTool = tool({
   description:
-    "Create or update a scheduled job definition in the current project (.opencode/scheduler/jobs/<slug>.json, git-committable). Schedule is a 5-field cron expression. Set either prompt (natural language) or command (custom command name). If the project is enabled, systemd units are re-synced automatically.",
+    "Create or update a scheduled job definition in the current project (.opencode/jobs/<slug>.json, git-committable). Schedule is a 5-field cron expression. Set either prompt (natural language) or command (custom command name). If the project is enabled, systemd units are re-synced automatically.",
   args: {
     name: tool.schema.string().describe("Human-readable job name"),
     schedule: tool.schema
@@ -487,7 +485,7 @@ const scheduleJobTool = tool({
       .string()
       .optional()
       .describe(
-        "Parent directory for the worktree (default: ~/.local/state/opencode/scheduler/worktrees/<scopeId>/<slug>). Relative paths resolve against the project directory; it should be dedicated to scheduler worktrees",
+        "Parent directory for the worktree (default: ~/.local/state/opencode/jobs/worktrees/<scopeId>/<slug>). Relative paths resolve against the project directory; it should be dedicated to job worktrees",
       ),
     worktreeRef: tool.schema
       .string()
@@ -562,7 +560,7 @@ const jobLogsTool = tool({
 
 const enableProjectTool = tool({
   description:
-    "Enable scheduled jobs for the current project: installs a systemd user service+timer per job definition in .opencode/scheduler/jobs/, registers the project in the global registry (~/.config/opencode/scheduler/registry.json), and removes stale units for deleted jobs. Idempotent, so it also re-syncs after job definitions change. Linux only.",
+    "Enable scheduled jobs for the current project: installs a systemd user service+timer per job definition in .opencode/jobs/, registers the project in the global registry (~/.config/opencode/jobs/registry.json), and removes stale units for deleted jobs. Idempotent, so it also re-syncs after job definitions change. Linux only.",
   args: {},
   execute: (_input, context) =>
     Promise.resolve(enableProjectOutput(context.directory)),
@@ -594,12 +592,12 @@ function disableProjectOutput(directory: string): ToolResult {
 
 const listProjectsTool = tool({
   description:
-    "List all projects with enabled scheduled jobs from the global registry (~/.config/opencode/scheduler/registry.json).",
+    "List all projects with enabled scheduled jobs from the global registry (~/.config/opencode/jobs/registry.json).",
   args: {},
   execute: () => Promise.resolve(listProjectsOutput()),
 });
 
-export const schedulerTools: Record<string, ToolDefinition> = {
+export const jobsTools: Record<string, ToolDefinition> = {
   schedule_job: scheduleJobTool,
   list_jobs: listJobsTool,
   get_job: showJobTool,
