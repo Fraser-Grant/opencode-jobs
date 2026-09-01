@@ -5,6 +5,7 @@
 // Not part of `npm run check` (needs systemd-analyze + dash); run via `npm run smoke`.
 import assert from "node:assert/strict";
 import { execSync, spawn } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   chmodSync,
   existsSync,
@@ -692,8 +693,8 @@ writeFileSync(
     'echo "fake opencode: $*"',
     'case "${WT_MODE:-}" in',
     "  idle) ;;",
-    '  fail) echo "produced by job" > wt-artifact.txt; exit 3 ;;',
-    '  *) echo "produced by job" > wt-artifact.txt ;;',
+    '  fail) echo "produced by job" > wt-artifact.txt; pwd > pwd-artifact.txt; exit 3 ;;',
+    '  *) echo "produced by job" > wt-artifact.txt; pwd > pwd-artifact.txt ;;',
     "esac",
     "exit 0",
     "",
@@ -865,6 +866,83 @@ function worktreeCase(slug, jobOverrides = {}) {
   const records = readRecords();
   assert.equal(records.at(-1).status, "failed");
   assert.equal(records.at(-1).worktreeBranch, "");
+}
+
+{
+  const { runOnce, readRecords } = worktreeCase("wtlock");
+  const lockDir = join(wtXdg, "opencode", "scheduler", "locks", "wt-scope");
+  mkdirSync(lockDir, { recursive: true });
+  const holder = spawn("flock", [join(lockDir, "wtlock.lock"), "sleep", "2"]);
+  await sleep(300);
+  assert.equal(await runOnce(), 0, "locked-out run must exit 0");
+  const locked = readRecords();
+  assert.equal(locked.at(-1).status, "skipped");
+  await new Promise((resolve) => {
+    holder.on("exit", resolve);
+  });
+  assert.equal(await runOnce(), 0, "run must succeed after the lock releases");
+  assert.equal(readRecords().at(-1).status, "success");
+}
+
+const monoRepo = join(wtWork, "monorepo");
+mkdirSync(join(monoRepo, "packages", "app"), { recursive: true });
+execSync("git init -q", { cwd: monoRepo });
+execSync("git config user.email test@example.com", { cwd: monoRepo });
+execSync('git config user.name "Smoke Test"', { cwd: monoRepo });
+writeFileSync(join(monoRepo, "packages", "app", "hello.txt"), "hi\n");
+execSync("git add .", { cwd: monoRepo });
+execSync("git commit -qm init", { cwd: monoRepo });
+{
+  const { runOnce, defaultPath } = worktreeCase("wtsub");
+  assert.equal(
+    await runOnce({}, join(monoRepo, "packages", "app")),
+    0,
+    "subdir project must run in its worktree subdirectory",
+  );
+  assert.ok(!existsSync(defaultPath), "worktree removed");
+  const branch = execSync(
+    `git -C ${monoRepo} for-each-ref --format='%(refname:short)' refs/heads/opencode-jobs/wtsub/`,
+  )
+    .toString()
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .at(0);
+  assert.ok(branch, "subdir run must leave a branch");
+  assert.equal(
+    execSync(`git -C ${monoRepo} show ${branch}:packages/app/pwd-artifact.txt`)
+      .toString()
+      .trim(),
+    join(defaultPath, "packages", "app"),
+    "the job must run inside the matching project subdirectory",
+  );
+}
+
+{
+  const { runOnce, readRecords, defaultPath } = worktreeCase("wtfailrecover");
+  execSync(
+    `git -C ${wtRepo} worktree add -b opencode-jobs/wtfailrecover/stale ${defaultPath}`,
+  );
+  writeFileSync(join(defaultPath, "abandoned.txt"), "keep me\n");
+  const preCommit = join(wtRepo, ".git", "hooks", "pre-commit");
+  writeFileSync(preCommit, "#!/bin/sh\nexit 1\n");
+  chmodSync(preCommit, 0o755);
+  assert.equal(await runOnce({ WT_MODE: "idle" }), 1);
+  assert.ok(
+    existsSync(join(defaultPath, "abandoned.txt")),
+    "unsavable stale worktree must be kept",
+  );
+  const blocked = readRecords();
+  assert.equal(blocked.at(-1).status, "failed");
+  assert.equal(blocked.at(-1).worktreeBranch, "");
+  rmSync(preCommit);
+  assert.equal(
+    await runOnce({ WT_MODE: "idle" }),
+    0,
+    "run must recover once the hook allows the recovery commit",
+  );
+  assert.ok(!existsSync(defaultPath), "stale worktree cleaned after recovery");
+  assert.equal(readRecords().at(-1).status, "success");
 }
 
 console.log(

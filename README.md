@@ -68,7 +68,7 @@ exit. Job definitions, run history, session state, and logs are kept.
 
 Add `--purge` to also delete the project's job definitions
 (`.opencode/scheduler/`) and its scheduler data (run scripts, run history,
-session state, and logs):
+session state, run locks, worktrees, and logs):
 
 ```sh
 opencode-jobs uninstall --purge
@@ -160,12 +160,18 @@ leave the main tree dirty:
 
 Each run:
 
-1. creates a worktree at `<base>/<slug>` on a new branch
+1. takes a per-job lock (so an overlapping timer and `run_job` invocation
+   cannot fight over the worktree — the later run is recorded as
+   `skipped`), then creates a worktree at `<base>/<slug>` on a new branch
    `opencode-jobs/<slug>/<timestamp>-<pid>`, starting from `ref`
    (default: `HEAD` of the project checkout). A leftover worktree from a
    crashed or timed-out run is committed first (recovery commit on its own
-   branch) and then removed;
-2. runs the job with the worktree as the working directory;
+   branch) and then removed — unless the recovery commit fails (for
+   example a `pre-commit` hook rejects the changes), in which case the
+   stale worktree is kept and the run fails instead of discarding work;
+2. runs the job with the worktree as the working directory — if the
+   project is a subdirectory of a larger repository, the job runs in the
+   matching subdirectory of the worktree;
 3. commits everything (`git add -A`) as `opencode-jobs` with
    `--no-gpg-sign`, then removes the worktree — the branch and its commits
    stay in the repository, and the run record stores `worktreeBranch` and
@@ -204,6 +210,7 @@ delete them when you no longer need the work.
 | Run scripts         | `~/.config/opencode/scheduler/scopes/<scopeId>/run-<slug>.sh`                           |
 | Run history (JSONL) | `~/.config/opencode/scheduler/runs/<scopeId>/<slug>.jsonl`                              |
 | Session state       | `~/.config/opencode/scheduler/sessions/<scopeId>/<slug>.txt`                            |
+| Run locks           | `~/.config/opencode/scheduler/locks/<scopeId>/<slug>.lock` (worktree jobs)              |
 | Job worktrees       | `~/.local/state/opencode/scheduler/worktrees/<scopeId>/<slug>` (removed after each run) |
 | Job logs            | `~/.config/opencode/logs/scheduler/<scopeId>/<slug>.log`                                |
 | Project registry    | `~/.config/opencode/scheduler/registry.json`                                            |
@@ -225,7 +232,7 @@ up `~/.config/opencode/scheduler/` (and the unit files) manually afterwards.
 
 - Linux with a systemd user session (jobs run via `systemctl --user`)
 - `curl` (used by `compact`/`compact+last` modes only)
-- `git` (used by `worktree` jobs only)
+- `git` and `flock` (from util-linux; used by `worktree` jobs only)
 - POSIX `sh` (generated scripts are `sh`/`dash`-verified)
 - The `opencode` CLI available to the timer environment
 

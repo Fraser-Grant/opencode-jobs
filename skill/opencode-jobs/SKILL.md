@@ -38,8 +38,9 @@ scheduler state directly.
   each run gets a fresh git worktree (default base
   `~/.local/state/opencode/scheduler/worktrees/…`, override with
   `worktree.base`), all changes are committed to a per-run branch
-  `opencode-jobs/<slug>/…`, and the worktree is removed. Requires a git
-  repository.
+  `opencode-jobs/<slug>/…`, and the worktree is removed. Overlapping runs
+  of the same job are skipped via a lock; subdirectory projects run in
+  the matching worktree subdirectory. Requires a git repository.
 - Scheduled jobs require Linux, a systemd user session, and an `opencode`
   executable available to the timer environment.
 

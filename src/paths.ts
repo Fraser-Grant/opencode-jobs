@@ -15,6 +15,10 @@ export function worktreesDirectory(scopeId: string): string {
   return path.join(stateRoot(), "opencode", "scheduler", "worktrees", scopeId);
 }
 
+export function locksDirectory(scopeId: string): string {
+  return path.join(schedulerDirectory(), "locks", scopeId);
+}
+
 export function schedulerDirectory(): string {
   return path.join(configRoot(), "opencode", "scheduler");
 }

@@ -242,22 +242,31 @@ writeFileSync(
   "{}\n",
 );
 const fakeHome = join(work, "fake-home");
+const fakeState = join(work, "fake-state");
 const scopeId = scopeIdFor(purgeProject);
 for (const part of [
   join("opencode", "scheduler", "scopes", scopeId),
   join("opencode", "scheduler", "runs", scopeId),
   join("opencode", "scheduler", "sessions", scopeId),
+  join("opencode", "scheduler", "locks", scopeId),
   join("opencode", "logs", "scheduler", scopeId),
 ]) {
   mkdirSync(join(fakeHome, part), { recursive: true });
 }
+mkdirSync(join(fakeState, "opencode", "scheduler", "worktrees", scopeId), {
+  recursive: true,
+});
 const purgeUninstall = JSON.parse(
   runUninstall(purgeProject, ["--purge"], {
-    env: { ...process.env, XDG_CONFIG_HOME: fakeHome },
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: fakeHome,
+      XDG_STATE_HOME: fakeState,
+    },
   }),
 );
 assert.equal(purgeUninstall.disabled, false);
-assert.equal(purgeUninstall.purge.paths.length, 5);
+assert.equal(purgeUninstall.purge.paths.length, 7);
 assert.equal(
   existsSync(join(fakeHome, "opencode", "scheduler", "runs", scopeId)),
   false,
@@ -265,6 +274,11 @@ assert.equal(
 assert.equal(
   existsSync(join(fakeHome, "opencode", "logs", "scheduler", scopeId)),
   false,
+);
+assert.equal(
+  existsSync(join(fakeState, "opencode", "scheduler", "worktrees", scopeId)),
+  false,
+  "purge must remove scheduler worktrees from XDG state",
 );
 assert.equal(existsSync(join(purgeProject, ".opencode", "scheduler")), false);
 assert.equal(existsSync(join(purgeProject, ".opencode")), false);
