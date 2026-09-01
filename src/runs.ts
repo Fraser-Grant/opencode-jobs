@@ -15,6 +15,8 @@ const runRecordSchema = z.object({
   exitCode: optionalNumber,
   sessionId: optionalString,
   startedBy: optionalString,
+  worktreeBranch: optionalString,
+  worktreeCommit: optionalString,
 });
 
 export type RunRecord = z.infer<typeof runRecordSchema>;
@@ -67,7 +69,15 @@ export function formatRunLine(record: RunRecord): string {
     record.sessionId === undefined || record.sessionId.length === 0
       ? ""
       : ` session ${record.sessionId}`;
-  return `${timestampOf(record)} ${record.status ?? "?"}${code}${duration}${session} via ${record.startedBy ?? "?"}`;
+  const worktree =
+    record.worktreeBranch === undefined || record.worktreeBranch.length === 0
+      ? ""
+      : ` worktree ${record.worktreeBranch}` +
+        (record.worktreeCommit === undefined ||
+        record.worktreeCommit.length === 0
+          ? ""
+          : `@${record.worktreeCommit.slice(0, 7)}`);
+  return `${timestampOf(record)} ${record.status ?? "?"}${code}${duration}${session}${worktree} via ${record.startedBy ?? "?"}`;
 }
 
 export function tailFile(

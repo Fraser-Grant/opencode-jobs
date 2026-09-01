@@ -30,6 +30,12 @@ export const SESSION_MODES = [
 
 export type SessionMode = (typeof SESSION_MODES)[number];
 
+export interface WorktreeOptions {
+  base?: string;
+  ref?: string;
+  commitMessage?: string;
+}
+
 export interface Job {
   slug: string;
   name: string;
@@ -37,6 +43,7 @@ export interface Job {
   run: RunSpec;
   session?: SessionMode;
   guard?: string;
+  worktree?: WorktreeOptions;
   timeoutSeconds?: number;
   createdAt: string;
   updatedAt: string;
@@ -99,6 +106,26 @@ const guardSchema = z
     "must be a non-empty shell command string",
   );
 
+const worktreeSchema = z
+  .union([
+    z.literal(true),
+    z.strictObject({
+      base: nonEmptyStringSchema.optional(),
+      ref: nonEmptyStringSchema.optional(),
+      commitMessage: nonEmptyStringSchema.optional(),
+    }),
+  ])
+  .transform((value): WorktreeOptions => {
+    if (value === true) return {};
+    return {
+      ...(value.base !== undefined && { base: value.base }),
+      ...(value.ref !== undefined && { ref: value.ref }),
+      ...(value.commitMessage !== undefined && {
+        commitMessage: value.commitMessage,
+      }),
+    };
+  });
+
 const timeoutSchema = z
   .number()
   .int()
@@ -119,6 +146,7 @@ const jobFileSchema = z.strictObject({
   run: runSpecSchema,
   session: sessionSchema.default("new"),
   guard: guardSchema.optional(),
+  worktree: worktreeSchema.optional(),
   timeoutSeconds: timeoutSchema.optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
@@ -168,6 +196,14 @@ export function validateGuard(
   return parseWithContext(guardSchema, value, context);
 }
 
+export function validateWorktree(
+  value: unknown,
+  context: string,
+): WorktreeOptions | undefined {
+  if (value === undefined) return undefined;
+  return parseWithContext(worktreeSchema, value, context);
+}
+
 export function loadJobFile(file: string, expectedSlug?: string): JobResult {
   const stem = path.basename(file, ".json");
   try {
@@ -198,6 +234,9 @@ export function loadJobFile(file: string, expectedSlug?: string): JobResult {
         run: definition.run,
         ...(definition.session !== "new" && { session: definition.session }),
         ...(definition.guard !== undefined && { guard: definition.guard }),
+        ...(definition.worktree !== undefined && {
+          worktree: definition.worktree,
+        }),
         ...(definition.timeoutSeconds !== undefined && {
           timeoutSeconds: definition.timeoutSeconds,
         }),

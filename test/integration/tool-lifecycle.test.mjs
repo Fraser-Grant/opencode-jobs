@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -63,6 +64,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
       "#!/bin/sh",
       'printf \'%s\\n\' "$*" >> "$OPENCODE_CALLS"',
       'echo "fake opencode: $*"',
+      "echo produced > wt-artifact.txt",
       "exit 0",
       "",
     ].join("\n"),
@@ -133,6 +135,18 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   assert.equal(invalidRun.metadata?.error, true);
   assert.match(invalidRun.output, /must set exactly one/);
 
+  const invalidWorktree = await scheduleJob.execute(
+    {
+      name: "Invalid",
+      schedule: "0 9 * * *",
+      prompt: "No worktree",
+      worktreeBase: "/tmp/somewhere",
+    },
+    toolContext,
+  );
+  assert.equal(invalidWorktree.metadata?.error, true);
+  assert.match(invalidWorktree.output, /set worktree: true/);
+
   const guardedJob = await scheduleJob.execute(
     {
       name: "Guarded Review",
@@ -157,15 +171,46 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   );
   assert.match(cleanupJob.output, /Created job "Cleanup"/);
 
+  const worktreeBase = join(work, "worktrees");
+  const worktreeJob = await scheduleJob.execute(
+    {
+      name: "Worktree Sweep",
+      schedule: "0 6 * * *",
+      prompt: "Sweep the repo.",
+      worktree: true,
+      worktreeBase,
+      slug: "worktree-sweep",
+    },
+    toolContext,
+  );
+  assert.match(worktreeJob.output, /Created job "Worktree Sweep"/);
+  assert.match(worktreeJob.output, /Worktree: yes \(base/);
+  const worktreeDefinition = JSON.parse(
+    readFileSync(
+      join(project, ".opencode", "scheduler", "jobs", "worktree-sweep.json"),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(worktreeDefinition.worktree, { base: worktreeBase });
+
+  execSync("git init -q", { cwd: project });
+  execSync("git config user.email test@example.com", { cwd: project });
+  execSync('git config user.name "Integration Test"', { cwd: project });
+  execSync("git commit --allow-empty -qm init", { cwd: project });
+
   const enabled = await enableProject.execute({}, toolContext);
-  assert.match(enabled.output, /Enabled 2 job\(s\)/);
+  assert.match(enabled.output, /Enabled 3 job\(s\)/);
   assert.match(enabled.output, /next: 2030-01-01 09:00:00 UTC/);
 
   const registryFile = join(config, "opencode", "scheduler", "registry.json");
   const registry = JSON.parse(readFileSync(registryFile, "utf8"));
   const registryEntry = registry.projects[resolve(project)];
   assert.ok(registryEntry);
-  assert.deepEqual(registryEntry.jobs, ["cleanup", "guarded-review"]);
+  assert.deepEqual(registryEntry.jobs, [
+    "cleanup",
+    "guarded-review",
+    "worktree-sweep",
+  ]);
   const scope = registryEntry.scopeId;
   const unitPrefix = `opencode-sched-${scope}`;
   const systemdDirectory = join(config, "systemd", "user");
@@ -284,6 +329,41 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
     1,
   );
 
+  const shownWorktree = await getJob.execute(
+    { slug: "worktree-sweep" },
+    toolContext,
+  );
+  assert.match(shownWorktree.output, /Worktree: fresh per run/);
+  const worktreeRecords = join(
+    config,
+    "opencode",
+    "scheduler",
+    "runs",
+    scope,
+    "worktree-sweep.jsonl",
+  );
+  await runJob.execute({ slug: "worktree-sweep" }, toolContext);
+  await waitFor(
+    () =>
+      readJsonLines(worktreeRecords).filter(
+        (record) => record.status !== "running",
+      ).length === 1,
+    "successful worktree run",
+  );
+  const worktreeRun = readJsonLines(worktreeRecords).at(-1);
+  assert.equal(worktreeRun.status, "success");
+  assert.match(worktreeRun.worktreeBranch, /^opencode-jobs\/worktree-sweep\//);
+  assert.match(worktreeRun.worktreeCommit, /^[0-9a-f]{40}$/);
+  assert.equal(existsSync(join(worktreeBase, "worktree-sweep")), false);
+  execSync(
+    `git -C ${project} cat-file -e ${worktreeRun.worktreeBranch}:wt-artifact.txt`,
+  );
+  const worktreeLog = await jobLogs.execute(
+    { slug: "worktree-sweep", lines: 20 },
+    toolContext,
+  );
+  assert.match(worktreeLog.output, /committed worktree changes to branch/);
+
   const cleanupTimer = join(systemdDirectory, `${unitPrefix}-cleanup.timer`);
   const cleanupService = join(
     systemdDirectory,
@@ -297,10 +377,11 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   const registryAfterDelete = JSON.parse(readFileSync(registryFile, "utf8"));
   assert.deepEqual(registryAfterDelete.projects[resolve(project)].jobs, [
     "guarded-review",
+    "worktree-sweep",
   ]);
 
   const disabled = await disableProject.execute({}, toolContext);
-  assert.match(disabled.output, /Disabled 1 job\(s\)/);
+  assert.match(disabled.output, /Disabled 2 job\(s\)/);
   assert.equal(existsSync(guardedTimer), false);
   assert.equal(existsSync(guardedService), false);
   assert.equal(existsSync(guardedScript), false);
