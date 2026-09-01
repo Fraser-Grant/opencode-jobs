@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v0.1.2...opencode-jobs-v0.2.0) (2026-09-01)
+
+
+### Features
+
+* run jobs in a fresh git worktree ([#9](https://github.com/Fraser-Grant/opencode-jobs/issues/9)) ([b037955](https://github.com/Fraser-Grant/opencode-jobs/commit/b0379551764f7fc9e486291ebd0d6cdc1904d0aa))
+
 ## [0.1.2](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v0.1.1...opencode-jobs-v0.1.2) (2026-08-31)
 
 ### Bug Fixes

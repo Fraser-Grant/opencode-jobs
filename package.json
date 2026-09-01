@@ -1,6 +1,6 @@
 {
   "name": "opencode-jobs",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "opencode plugin that schedules recurring agent jobs as systemd user timers, with git-committable job definitions, run history, and session continuity",
   "type": "module",
   "engines": {
