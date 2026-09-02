@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installProject, uninstallProject } from "./install.js";
 import { errorMessage } from "./json.js";
+import { migrateStorage } from "./migration.js";
 import { listJobs, runJobNow, type ManagementResult } from "./management.js";
 import { disableProject, enableProject } from "./project.js";
 
@@ -137,28 +138,32 @@ if ([undefined, "help", "--help"].includes(command)) {
   ["list", "enable", "disable", "run"].includes(command)
 ) {
   try {
+    let slug: string | undefined;
+    let project: string;
+    if (command === "run") {
+      ({ slug, project } = runArguments(rest));
+    } else {
+      project = projectArgument(command, rest);
+    }
+    const migration = migrateStorage(project, true);
+    for (const warning of migration.warnings) {
+      console.error(`storage migration warning: ${warning}`);
+    }
     switch (command) {
       case "list": {
-        printManagementResult(listJobs(projectArgument(command, rest)));
+        printManagementResult(listJobs(project));
         break;
       }
       case "enable": {
-        printManagementResult({
-          ok: true,
-          output: enableProject(projectArgument(command, rest)),
-        });
+        printManagementResult({ ok: true, output: enableProject(project) });
         break;
       }
       case "disable": {
-        printManagementResult({
-          ok: true,
-          output: disableProject(projectArgument(command, rest)),
-        });
+        printManagementResult({ ok: true, output: disableProject(project) });
         break;
       }
       case "run": {
-        const { slug, project } = runArguments(rest);
-        printManagementResult(runJobNow(slug, project));
+        printManagementResult(runJobNow(slug ?? "", project));
         break;
       }
       default: {

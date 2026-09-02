@@ -488,6 +488,17 @@ export interface TimerStatus {
   last: string | undefined;
 }
 
+function isTimerLoaded(base: string): boolean {
+  const result = systemctl([
+    "show",
+    timerUnit(base),
+    "-p",
+    "LoadState",
+    "--value",
+  ]);
+  return result.ok && result.stdout !== "not-found";
+}
+
 export function timerStatus(base: string): TimerStatus {
   const result = systemctl([
     "show",
@@ -545,7 +556,12 @@ export function removeJobUnits(
     path.join(systemdUserDirectory(), serviceUnit(base)),
   ];
   const script = runScriptPath(scopeId, slug);
-  if ([...files, script].every((file) => !existsSync(file))) return undefined;
+  if (
+    [...files, script].every((file) => !existsSync(file)) &&
+    !isTimerLoaded(base)
+  ) {
+    return undefined;
+  }
   const disable = systemctl(["disable", "--now", timerUnit(base)]);
   if (!disable.ok) {
     return `${timerUnit(base)}: ${disable.stderr}${systemdHint(disable.stderr)}`;
