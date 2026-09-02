@@ -6,8 +6,10 @@ import {
   validateGuard,
   validateRunSpec,
   validateSession,
+  validateSkills,
   validateWorktree,
 } from "./job.js";
+import { resolveSkills } from "./skills.js";
 import {
   buildOpencodeArguments,
   runScriptContent,
@@ -25,7 +27,9 @@ export const internals = {
   validateRunSpec,
   validateGuard,
   validateSession,
+  validateSkills,
   validateWorktree,
+  resolveSkills,
   buildOpencodeArguments,
   runScriptContent,
   serviceContent,

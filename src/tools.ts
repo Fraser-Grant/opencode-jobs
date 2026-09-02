@@ -24,6 +24,7 @@ import {
   validateGuard,
   validateRunSpec,
   validateSession,
+  validateSkills,
   validateTimeout,
   validateWorktree,
 } from "./job.js";
@@ -40,6 +41,7 @@ import {
 import { disableProject, enableProject } from "./project.js";
 import { errorMessage } from "./json.js";
 import { listJobs, runJobNow, type ManagementResult } from "./management.js";
+import { resolveSkills } from "./skills.js";
 
 function ok(output: string): ToolResult {
   return { output };
@@ -59,6 +61,7 @@ interface ScheduleJobInput {
   prompt?: string | undefined;
   command?: string | undefined;
   arguments?: string | undefined;
+  skills?: string[] | undefined;
   session?: string | undefined;
   guard?: string | undefined;
   worktree?: boolean | undefined;
@@ -93,6 +96,7 @@ function scheduleJobOutput(
   }
   let run: Job["run"];
   let session: Job["session"] | "new";
+  let skills: string[] | undefined;
   let guard: string | undefined;
   let worktree: Job["worktree"];
   let timeoutSeconds: number | undefined;
@@ -108,6 +112,8 @@ function scheduleJobOutput(
       "job",
     );
     session = validateSession(input.session, "job");
+    skills = validateSkills(input.skills, "job");
+    if (skills !== undefined) resolveSkills(skills, directory);
     guard = validateGuard(input.guard, "job");
     worktree = validateWorktree(
       input.worktree === true
@@ -138,6 +144,7 @@ function scheduleJobOutput(
     name: input.name,
     schedule: input.schedule,
     run,
+    ...(skills !== undefined && { skills }),
     ...(session !== "new" && { session }),
     ...(guard !== undefined && { guard }),
     ...(worktree !== undefined && { worktree }),
@@ -152,6 +159,7 @@ function scheduleJobOutput(
     `Definition: ${relativePath} (${job.schedule} — ${describeCron(sets)})`,
   ];
   if (session !== "new") lines.push(`Session: ${session}`);
+  if (skills !== undefined) lines.push(`Skills: ${skills.join(", ")}`);
   if (worktree !== undefined)
     lines.push(
       `Worktree: yes (base ${worktree.base ?? "default"}, branch opencode-jobs/${slug}/<run>)`,
@@ -241,6 +249,7 @@ function showJobOutput(slugInput: string, directory: string): ToolResult {
   }
   if (job.run.agent !== undefined) lines.push(`Agent: ${job.run.agent}`);
   if (job.run.model !== undefined) lines.push(`Model: ${job.run.model}`);
+  if (job.skills !== undefined) lines.push(`Skills: ${job.skills.join(", ")}`);
   if (job.timeoutSeconds !== undefined && job.timeoutSeconds > 0) {
     lines.push(
       `Timeout: ${String(job.timeoutSeconds)}s (systemd TimeoutStartSec)`,
@@ -383,6 +392,12 @@ const scheduleJobTool = tool({
       .string()
       .optional()
       .describe("Arguments passed to the custom command"),
+    skills: tool.schema
+      .array(tool.schema.string())
+      .optional()
+      .describe(
+        "Skill names to inject as context before the run. Names resolve from project skills first, then global skills; unknown names are rejected",
+      ),
     session: tool.schema
       .string()
       .optional()

@@ -30,6 +30,10 @@ state directly.
   month, day of week.
 - Set exactly one of `prompt` or `command`. `arguments` only applies to a
   custom command.
+- Set `skills` to a list of skill names when their full instructions must be
+  present before the job's first turn. Names resolve from project skill
+  directories before global skill directories, and unknown names are rejected
+  when the definition is created. Skill-enabled runs require `curl`.
 - Default to `session: new`. Use `persist` when full continuity is needed,
   `compact` for summary continuity, or `compact+last` when the previous final
   result must also remain visible.

@@ -48,7 +48,9 @@ const {
   validateRunSpec,
   validateGuard,
   validateSession,
+  validateSkills,
   validateWorktree,
+  resolveSkills,
 } = internals;
 
 for (const [expr, expected] of [
@@ -127,6 +129,13 @@ assert.equal(validateSession("compact", "x"), "compact");
 assert.equal(validateSession("compact+last", "x"), "compact+last");
 assert.throws(() => validateSession("sometimes", "x"));
 assert.throws(() => validateSession(7, "x"));
+assert.deepEqual(validateSkills(["agent-db", "dev-servers"], "x"), [
+  "agent-db",
+  "dev-servers",
+]);
+assert.throws(() => validateSkills([], "x"));
+assert.throws(() => validateSkills(["../secret"], "x"));
+assert.throws(() => validateSkills(["agent-db", "agent-db"], "x"));
 assert.equal(validateWorktree(undefined, "x"), undefined);
 assert.deepEqual(validateWorktree(true, "x"), {});
 assert.deepEqual(validateWorktree({ base: "/tmp/wt" }, "x"), {
@@ -145,13 +154,46 @@ const validJobDefinition = {
   name: "Validated Job",
   schedule: "0 9 * * *",
   run: { prompt: "Review the project" },
+  skills: ["agent-db"],
 };
 writeFileSync(jobFile, JSON.stringify(validJobDefinition));
 const validJobResult = loadJobFile(jobFile);
 assert.equal(validJobResult.ok, true);
 assert.equal(validJobResult.job.slug, "validated-job");
 assert.equal(validJobResult.job.session, undefined);
+assert.deepEqual(validJobResult.job.skills, ["agent-db"]);
 assert.equal(validJobResult.job.createdAt, validJobResult.job.updatedAt);
+
+const skillProject = join(buildDir, "skill-project");
+const projectSkill = join(
+  skillProject,
+  ".opencode",
+  "skills",
+  "agent-db",
+  "SKILL.md",
+);
+const globalSkill = join(
+  process.env.XDG_CONFIG_HOME,
+  "opencode",
+  "skills",
+  "agent-db",
+  "SKILL.md",
+);
+mkdirSync(dirname(projectSkill), { recursive: true });
+mkdirSync(dirname(globalSkill), { recursive: true });
+writeFileSync(globalSkill, "global instructions\n");
+writeFileSync(projectSkill, "project instructions\n");
+assert.deepEqual(resolveSkills(["agent-db"], skillProject), [
+  {
+    name: "agent-db",
+    content: "project instructions\n",
+    file: projectSkill,
+  },
+]);
+assert.throws(
+  () => resolveSkills(["missing-skill"], skillProject),
+  /Unknown skill "missing-skill"/,
+);
 
 writeFileSync(jobFile, JSON.stringify({ ...validJobDefinition, slug: 7 }));
 const invalidSlugResult = loadJobFile(jobFile);
@@ -392,7 +434,7 @@ writeFileSync(
   [
     "#!/bin/sh",
     'if [ "$1" = "serve" ]; then',
-    '  echo "serve env=$OPENCODE_CONFIG_CONTENT" >> "$MARK"',
+    '  echo "serve env=${OPENCODE_CONFIG_CONTENT:-}" >> "$MARK"',
     '  echo "opencode server listening on http://127.0.0.1:41299"',
     "  sleep 30",
     "  exit 0",
@@ -427,6 +469,14 @@ writeFileSync(
     'echo "curl $*" >> "$MARK"',
     'eval "url=\\${$#}"',
     'case "$url" in',
+    "  */global/health)",
+    "    ;;",
+    "  */session)",
+    "    printf '%s\\n' '{\"id\":\"ses_SKILL\"}'",
+    "    ;;",
+    "  */session/ses_FAKE123)",
+    "    printf '%s\\n' 200",
+    "    ;;",
     "  */config/providers)",
     '    printf \'%s\\n\' \'{"providers":[],"default":{"prov-x":"model-y"}}\'',
     "    ;;",
@@ -448,10 +498,20 @@ function sessionCase(slug, job) {
   const mark = join(dir, "mark.log");
   const xdg = join(dir, "xdg");
   mkdirSync(dir, { recursive: true });
+  if (job.skills !== undefined) {
+    const skillFile = join(dir, ".opencode", "skills", "agent-db", "SKILL.md");
+    mkdirSync(dirname(skillFile), { recursive: true });
+    writeFileSync(skillFile, "Use the structured database tools.\n");
+  }
   const scriptPath = join(dir, `run-${slug}.sh`);
   writeFileSync(
     scriptPath,
-    runScriptContent(job, `sess-${slug}`, join(sessionWork, "bin", "opencode")),
+    runScriptContent(
+      job,
+      `sess-${slug}`,
+      join(sessionWork, "bin", "opencode"),
+      resolveSkills(job.skills ?? [], dir),
+    ),
   );
   chmodSync(scriptPath, 0o755);
   execSync(`sh -n ${scriptPath}`);
@@ -494,6 +554,39 @@ function sessionCase(slug, job) {
       child.on("exit", (code) => resolve({ code, output }));
     });
   return { mark, records, state, runOnce };
+}
+
+for (const mode of ["new", "persist", "compact", "compact+last"]) {
+  const slug = `skills-${mode.replace("+", "-")}`;
+  const skillJob = {
+    slug,
+    name: `Skills ${mode}`,
+    schedule: "0 9 * * *",
+    run: { prompt: "Use the database skill." },
+    skills: ["agent-db"],
+    ...(mode === "new" ? {} : { session: mode }),
+    createdAt: "t",
+    updatedAt: "t",
+  };
+  const { mark, runOnce } = sessionCase(slug, skillJob);
+  assert.equal((await runOnce()).code, 0);
+  const markText = execSync(`cat ${mark}`).toString();
+  const markLines = markText.split("\n");
+  const injectionIndex = markLines.findIndex((line) =>
+    line.includes("/message"),
+  );
+  const runIndex = markLines.findIndex((line) => line.startsWith("run args="));
+  assert.ok(injectionIndex >= 0, `${mode} injects the configured skill`);
+  assert.ok(
+    markText.includes('<skill name=\\"agent-db\\">') &&
+      markText.includes("Use the structured database tools."),
+    `${mode} injects the complete skill instructions`,
+  );
+  assert.ok(injectionIndex < runIndex, `${mode} injects before the first turn`);
+  assert.ok(
+    markLines[runIndex].includes("--session ses_SKILL"),
+    `${mode} runs the prepared session`,
+  );
 }
 
 const persistJob = {

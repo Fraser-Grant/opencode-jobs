@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Features
+
+- Allow job definitions to preload named project or global skills as session
+  context before the first model turn.
+
 ### Breaking changes
 
 - Job definitions and persisted state move from legacy `scheduler` paths to

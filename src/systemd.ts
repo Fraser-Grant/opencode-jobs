@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { homedir } from "node:os";
 import { type Job, type WorktreeOptions } from "./job.js";
+import { resolveSkills, type ResolvedSkill } from "./skills.js";
 import { cronToOnCalendar, parseCron } from "./cron.js";
 import {
   atomicWrite,
@@ -276,10 +277,88 @@ function compactSessionLines(): string[] {
   ];
 }
 
+function skillSessionLines(skills: readonly ResolvedSkill[]): string[] {
+  const sessionBody = JSON.stringify({ title: "opencode-jobs scheduled run" });
+  const httpCodeFormat = "%{http_code}";
+  const injectionLines = skills.flatMap((skill) => {
+    const body = JSON.stringify({
+      noReply: true,
+      parts: [
+        {
+          type: "text",
+          text: `<skill name="${skill.name}">\n${skill.content}\n</skill>`,
+        },
+      ],
+    });
+    return [
+      `  echo ${shQuote(`opencode-jobs: injecting skill ${skill.name} from ${skill.file}`)}`,
+      `  http="$(curl -s -o /dev/null -w '${httpCodeFormat}' --max-time 120 -X POST -H 'content-type: application/json' -d ${shQuote(body)} "http://127.0.0.1:$serve_port/session/$skill_session/message")"`,
+      '  if [ "$http" != "200" ]; then',
+      `    echo "opencode-jobs: failed to inject skill ${skill.name} (HTTP $http)"`,
+      '    kill "$serve_pid" 2>/dev/null',
+      '    wait "$serve_pid" 2>/dev/null',
+      '    rm -f "$serve_out" "$serve_err"',
+      "    return 1",
+      "  fi",
+    ];
+  });
+  return [
+    "prepare_skill_session() {",
+    '  requested_session="$1"',
+    "  if ! command -v curl >/dev/null 2>&1; then",
+    '    echo "opencode-jobs: curl is required to inject configured skills"',
+    "    return 1",
+    "  fi",
+    '  serve_out="$(mktemp)"',
+    '  serve_err="$(mktemp)"',
+    '  "$oc_bin" serve --port 0 >"$serve_out" 2>"$serve_err" &',
+    "  serve_pid=$!",
+    '  serve_port=""',
+    "  tries=0",
+    '  while [ "$tries" -lt 100 ]; do',
+    String.raw`    serve_port="$(sed -n 's/.*listening on http:\/\/127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$serve_out" | head -n 1)"`,
+    '    if [ -n "$serve_port" ]; then break; fi',
+    '    if ! kill -0 "$serve_pid" 2>/dev/null; then break; fi',
+    "    sleep 0.1",
+    "    tries=$((tries + 1))",
+    "  done",
+    '  if [ -z "$serve_port" ] || ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$serve_port/global/health"; then',
+    '    echo "opencode-jobs: skill context server failed to become healthy"',
+    '    kill "$serve_pid" 2>/dev/null',
+    '    wait "$serve_pid" 2>/dev/null',
+    '    rm -f "$serve_out" "$serve_err"',
+    "    return 1",
+    "  fi",
+    '  skill_session=""',
+    '  if [ -n "$requested_session" ]; then',
+    '    http="$(curl -s -o /dev/null -w \'%{http_code}\' --max-time 10 "http://127.0.0.1:$serve_port/session/$requested_session")"',
+    '    if [ "$http" = "200" ]; then skill_session="$requested_session"; fi',
+    "  fi",
+    '  if [ -z "$skill_session" ]; then',
+    `    session_json="$(curl -s --max-time 30 -X POST -H 'content-type: application/json' -d ${shQuote(sessionBody)} "http://127.0.0.1:$serve_port/session")"`,
+    String.raw`    skill_session="$(printf '%s\n' "$session_json" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"`,
+    '    if [ -z "$skill_session" ]; then',
+    '      echo "opencode-jobs: failed to create a session for skill context"',
+    '      kill "$serve_pid" 2>/dev/null',
+    '      wait "$serve_pid" 2>/dev/null',
+    '      rm -f "$serve_out" "$serve_err"',
+    "      return 1",
+    "    fi",
+    "  fi",
+    ...injectionLines,
+    '  kill "$serve_pid" 2>/dev/null',
+    '  wait "$serve_pid" 2>/dev/null',
+    '  rm -f "$serve_out" "$serve_err"',
+    "  return 0",
+    "}",
+  ];
+}
+
 export function runScriptContent(
   job: Job,
   scopeId: string,
   opencodeBin: string,
+  skills: readonly ResolvedSkill[] = [],
 ): string {
   const mode = job.session ?? "new";
   const isTracked = mode !== "new";
@@ -345,11 +424,18 @@ export function runScriptContent(
     "  fi",
     '  "$oc_bin" "$@"',
     "}",
+    ...(skills.length === 0 ? [] : skillSessionLines(skills)),
     ...(isCompact ? compactSessionLines() : []),
+    ...(skills.length === 0
+      ? []
+      : [
+          `if ! prepare_skill_session "${isTracked ? "$prev_session" : ""}"; then finish failed 1; exit 1; fi`,
+          'new_session="$skill_session"',
+        ]),
     ...(isTracked
       ? [
           'json_out="$(mktemp)"',
-          'run_opencode "$prev_session" 1 >"$json_out" 2>&1',
+          `run_opencode "${skills.length === 0 ? "$prev_session" : "$skill_session"}" 1 >"$json_out" 2>&1`,
           "code=$?",
           'cat "$json_out"',
           ...extractSessionIdLines("new_session"),
@@ -402,7 +488,10 @@ export function runScriptContent(
           String.raw`  printf '%s\n' "$new_session" >"$state_file"`,
           "fi",
         ]
-      : ['run_opencode "" 0', "code=$?"]),
+      : [
+          `run_opencode "${skills.length === 0 ? "" : "$skill_session"}" 0`,
+          "code=$?",
+        ]),
     "trap - TERM INT",
     ...(job.worktree === undefined ? [] : worktreeEpilogueLines(job.worktree)),
     'if [ "$code" -ne 0 ]; then finish failed "$code"; exit "$code"; fi',
@@ -526,9 +615,13 @@ export function writeJobUnits(
 ): string {
   const script = runScriptPath(scopeId, job.slug);
   const base = unitBase(scopeId, job.slug);
+  const skills = resolveSkills(job.skills ?? [], workdir);
   mkdirSync(logDirectory(scopeId), { recursive: true });
   mkdirSync(runsDirectory(scopeId), { recursive: true });
-  atomicWriteExecutable(script, runScriptContent(job, scopeId, opencodeBin));
+  atomicWriteExecutable(
+    script,
+    runScriptContent(job, scopeId, opencodeBin, skills),
+  );
   const onCalendars = cronToOnCalendar(parseCron(job.schedule));
   atomicWrite(
     path.join(systemdUserDirectory(), timerUnit(base)),
