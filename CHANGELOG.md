@@ -12,14 +12,13 @@
 
 ## [1.0.0](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v0.2.0...opencode-jobs-v1.0.0) (2026-09-02)
 
-
 ### ⚠ BREAKING CHANGES
 
-* migrate storage paths from scheduler to jobs ([#11](https://github.com/Fraser-Grant/opencode-jobs/issues/11))
+- migrate storage paths from scheduler to jobs ([#11](https://github.com/Fraser-Grant/opencode-jobs/issues/11))
 
 ### Features
 
-* migrate storage paths from scheduler to jobs ([#11](https://github.com/Fraser-Grant/opencode-jobs/issues/11)) ([3fe296f](https://github.com/Fraser-Grant/opencode-jobs/commit/3fe296ff3bb88af4c436fe1b9b1812a12d029f17))
+- migrate storage paths from scheduler to jobs ([#11](https://github.com/Fraser-Grant/opencode-jobs/issues/11)) ([3fe296f](https://github.com/Fraser-Grant/opencode-jobs/commit/3fe296ff3bb88af4c436fe1b9b1812a12d029f17))
 
 ## [0.2.0](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v0.1.2...opencode-jobs-v0.2.0) (2026-09-01)
 
