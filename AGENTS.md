@@ -27,9 +27,10 @@ eslint-plugin-unicorn recommended.
 ## Layout
 
 - `src/index.ts` — plugin entry (default export, non-Linux load warning).
-- `src/cli.ts` / `install.ts` — global npm CLI (`install`, `uninstall
-  [--purge]`) and idempotent project wiring for the package config entry and
-  bundled skill.
+- `src/cli.ts` / `install.ts` / `management.ts` — global npm CLI (`install`,
+  `uninstall [--purge]`, `list`, `enable`, `disable`, `run`), shared job
+  management operations, and idempotent project wiring for the package config
+  entry and bundled skill.
 - `src/tools.ts` — the nine agent tools (`jobsTools`).
 - `src/job.ts` / `cron.ts` / `systemd.ts` — job JSON validation, cron
   parsing → OnCalendar, and the systemd unit + POSIX run-script generators

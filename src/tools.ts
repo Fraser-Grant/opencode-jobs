@@ -3,24 +3,14 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from "@opencode-ai/plugin";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
-import { spawn } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { describeCron, parseCron, type CronSets } from "./cron.js";
 import {
   deriveScopeId,
   jobsDirectory,
-  logDirectory,
   logFile,
   nowIso,
-  runScriptPath,
   sessionStateFile,
   slugify,
   timerUnit,
@@ -30,7 +20,6 @@ import {
 import {
   type Job,
   loadJobFile,
-  loadJobs,
   saveJob,
   validateGuard,
   validateRunSpec,
@@ -39,12 +28,7 @@ import {
   validateWorktree,
 } from "./job.js";
 import { loadRegistry, registryEntry, saveRegistry } from "./registry.js";
-import {
-  formatRunLine,
-  lastFinishedRun,
-  readRunRecords,
-  tailFile,
-} from "./runs.js";
+import { formatRunLine, readRunRecords, tailFile } from "./runs.js";
 import {
   findOpencode,
   removeJobUnits,
@@ -55,6 +39,7 @@ import {
 } from "./systemd.js";
 import { disableProject, enableProject } from "./project.js";
 import { errorMessage } from "./json.js";
+import { listJobs, runJobNow, type ManagementResult } from "./management.js";
 
 function ok(output: string): ToolResult {
   return { output };
@@ -64,47 +49,8 @@ function fail(message: string): ToolResult {
   return { output: `Error: ${message}`, metadata: { error: true } };
 }
 
-function tryParseCron(schedule: string): CronSets | undefined {
-  try {
-    return parseCron(schedule);
-  } catch {
-    return undefined;
-  }
-}
-
-function listJobsOutput(directory: string): ToolResult {
-  const { jobs, errors } = loadJobs(directory);
-  const entry = registryEntry(directory);
-  const header = entry
-    ? `Project enabled (scope ${entry.scopeId}). Job definitions: ${jobsDirectory(directory)}`
-    : `Project not enabled. Job definitions: ${jobsDirectory(directory)}`;
-  const lines = [header];
-  if (jobs.length === 0)
-    lines.push("No job definitions. Create one with schedule_job.");
-  for (const job of jobs) {
-    const scopeId = entry?.scopeId ?? deriveScopeId(directory);
-    const sets = tryParseCron(job.schedule);
-    if (sets === undefined) {
-      lines.push(`- ${job.slug}: INVALID schedule "${job.schedule}"`);
-      continue;
-    }
-    const records = readRunRecords(scopeId, job.slug, 20);
-    const last = lastFinishedRun(records);
-    const lastDesc =
-      last === undefined
-        ? ", last: never"
-        : `, last: ${last.status ?? "?"} ${formatRunLine(last)}`;
-    const next =
-      entry === undefined
-        ? undefined
-        : timerStatus(unitBase(scopeId, job.slug)).next;
-    const nextDesc = next === undefined ? "" : `, next: ${next}`;
-    lines.push(
-      `- ${job.slug}: ${job.schedule} (${describeCron(sets)})${nextDesc}${lastDesc}`,
-    );
-  }
-  lines.push(...errors.map((error) => `! ${error}`));
-  return ok(lines.join("\n"));
+function managementToolResult(result: ManagementResult): ToolResult {
+  return result.ok ? ok(result.output) : fail(result.output);
 }
 
 interface ScheduleJobInput {
@@ -329,19 +275,29 @@ function removeJobDefinitionOutput(
   const file = path.join(jobsDirectory(directory), `${slug}.json`);
   if (!existsSync(file))
     return fail(`No job "${slug}" in ${jobsDirectory(directory)}`);
+  const abs = path.resolve(directory);
+  const entry = registryEntry(directory);
+  if (entry?.jobs.includes(slug)) {
+    const removalFailure = removeJobUnits(entry.scopeId, slug);
+    if (removalFailure !== undefined) {
+      return fail(`Failed to remove systemd units: ${removalFailure}`);
+    }
+    const reload = systemctl(["daemon-reload"]);
+    if (!reload.ok) {
+      return fail(
+        `Removed the units but systemd reload failed: ${reload.stderr}${systemdHint(reload.stderr)}`,
+      );
+    }
+  }
   rmSync(file);
   const lines = [`Deleted job definition .opencode/jobs/${slug}.json`];
-  const scopeId = registryEntry(directory)?.scopeId ?? deriveScopeId(directory);
+  const scopeId = entry?.scopeId ?? deriveScopeId(directory);
   const state = sessionStateFile(scopeId, slug);
   if (existsSync(state)) {
     rmSync(state);
     lines.push(`Removed session state ${state}`);
   }
-  const abs = path.resolve(directory);
-  const entry = registryEntry(directory);
   if (entry?.jobs.includes(slug)) {
-    removeJobUnits(entry.scopeId, slug);
-    systemctl(["daemon-reload"]);
     const registry = loadRegistry();
     const current = registry.projects[abs];
     if (current !== undefined) {
@@ -361,42 +317,6 @@ function omitProject(
 ): void {
   const { [workdir]: _omitted, ...remaining } = registry.projects;
   registry.projects = remaining;
-}
-
-function runJobNowOutput(slugInput: string, directory: string): ToolResult {
-  const slug = slugify(slugInput);
-  const file = path.join(jobsDirectory(directory), `${slug}.json`);
-  if (!existsSync(file))
-    return fail(`No job "${slug}" in ${jobsDirectory(directory)}`);
-  const entry = registryEntry(directory);
-  if (entry === undefined) {
-    return fail(
-      `Project is not enabled, so no run script exists for "${slug}". Run enable_project first.`,
-    );
-  }
-  const script = runScriptPath(entry.scopeId, slug);
-  if (!existsSync(script)) {
-    return fail(
-      `Run script missing for "${slug}". Run enable_project to (re)install units.`,
-    );
-  }
-  const log = logFile(entry.scopeId, slug);
-  mkdirSync(logDirectory(entry.scopeId), { recursive: true });
-  const fd = openSync(log, "a");
-  const child = spawn("/bin/sh", [script], {
-    cwd: path.resolve(directory),
-    env: { ...process.env, OPENCODE_JOBS_STARTED_BY: "manual" },
-    stdio: ["ignore", fd, fd],
-  });
-  child.unref();
-  closeSync(fd);
-  const tail = tailFile(log, 5, 2000);
-  const parts = [
-    `Started "${slug}" manually (pid ${String(child.pid)})`,
-    `Log: ${log}`,
-  ];
-  if (tail?.length) parts.push(`Log tail:\n${tail}`);
-  return ok(parts.join("\n"));
 }
 
 function jobLogsOutput(
@@ -438,7 +358,7 @@ const listJobsTool = tool({
     "List scheduled job definitions for the current project (from .opencode/jobs/), including enabled state, next run, and last run status.",
   args: {},
   execute: (_input, context) =>
-    Promise.resolve(listJobsOutput(context.directory)),
+    Promise.resolve(managementToolResult(listJobs(context.directory))),
 });
 
 const scheduleJobTool = tool({
@@ -541,7 +461,9 @@ const runJobTool = tool({
     slug: tool.schema.string().describe("Job slug to run now"),
   },
   execute: (input, context) =>
-    Promise.resolve(runJobNowOutput(input.slug, context.directory)),
+    Promise.resolve(
+      managementToolResult(runJobNow(input.slug, context.directory)),
+    ),
 });
 
 const jobLogsTool = tool({

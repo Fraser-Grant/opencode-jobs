@@ -79,11 +79,16 @@ opencode-jobs uninstall --purge
 ```text
 opencode-jobs install [projectDir]
 opencode-jobs uninstall [projectDir] [--purge]
+opencode-jobs list [projectDir]
+opencode-jobs enable [projectDir]
+opencode-jobs disable [projectDir]
+opencode-jobs run <slug> [projectDir]
 ```
 
 The CLI is installed as the `opencode-jobs` npm executable. `projectDir`
-defaults to the current directory. Both commands print a JSON result so they
-can also be used from setup scripts and CI.
+defaults to the current directory. The management commands mirror the plugin's
+list, project enable/disable, and immediate-run operations. All commands print
+JSON results so they can also be used from setup scripts and CI.
 
 ## Tools
 
