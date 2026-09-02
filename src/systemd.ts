@@ -535,17 +535,26 @@ export function writeJobUnits(
   return base;
 }
 
-export function removeJobUnits(scopeId: string, slug: string): void {
+export function removeJobUnits(
+  scopeId: string,
+  slug: string,
+): string | undefined {
   const base = unitBase(scopeId, slug);
-  systemctl(["disable", "--now", timerUnit(base)]);
-  for (const file of [
+  const files = [
     path.join(systemdUserDirectory(), timerUnit(base)),
     path.join(systemdUserDirectory(), serviceUnit(base)),
-  ]) {
+  ];
+  const script = runScriptPath(scopeId, slug);
+  if ([...files, script].every((file) => !existsSync(file))) return undefined;
+  const disable = systemctl(["disable", "--now", timerUnit(base)]);
+  if (!disable.ok) {
+    return `${timerUnit(base)}: ${disable.stderr}${systemdHint(disable.stderr)}`;
+  }
+  for (const file of files) {
     if (existsSync(file)) rmSync(file);
   }
-  const script = runScriptPath(scopeId, slug);
   if (existsSync(script)) rmSync(script);
+  return undefined;
 }
 
 export function removeStaleUnits(

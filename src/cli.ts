@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installProject, uninstallProject } from "./install.js";
 import { errorMessage } from "./json.js";
+import { listJobs, runJobNow, type ManagementResult } from "./management.js";
+import { disableProject, enableProject } from "./project.js";
 
 const USAGE = `Usage: opencode-jobs <command> [projectDir]
 
@@ -10,6 +12,10 @@ Commands:
   install [projectDir]            Add the plugin and bundled skill to a project (default: current directory)
   uninstall [projectDir] [--purge]  Remove the plugin entry, skill, and systemd units from a project;
                                   --purge also deletes job definitions and job data
+  list [projectDir]               List jobs and their enabled, next-run, and last-run state
+  enable [projectDir]             Enable or re-sync all jobs in a project
+  disable [projectDir]            Disable all jobs in a project while keeping definitions and history
+  run <slug> [projectDir]         Run one enabled job immediately
   help                            Show this help`;
 
 function packageDirectory(): string {
@@ -17,8 +23,44 @@ function packageDirectory(): string {
 }
 
 function printError(message: string): void {
-  console.error(`Error: ${message}\n\n${USAGE}`);
+  console.log(
+    JSON.stringify({ ok: false, output: `Error: ${message}` }, undefined, 2),
+  );
+  console.error(USAGE);
   process.exitCode = 1;
+}
+
+function projectArgument(command: string, arguments_: string[]): string {
+  if (arguments_.some((argument) => argument.startsWith("--"))) {
+    throw new Error(`${command} does not accept options`);
+  }
+  if (arguments_.length > 1) {
+    throw new Error(`${command} accepts at most one project directory`);
+  }
+  return arguments_[0] ?? process.cwd();
+}
+
+function runArguments(arguments_: string[]): {
+  slug: string;
+  project: string;
+} {
+  if (arguments_.some((argument) => argument.startsWith("--"))) {
+    throw new Error("run does not accept options");
+  }
+  if (arguments_.length === 0 || arguments_.length > 2) {
+    throw new Error(
+      "run requires a job slug and accepts one project directory",
+    );
+  }
+  return {
+    slug: arguments_[0] ?? "",
+    project: arguments_[1] ?? process.cwd(),
+  };
+}
+
+function printManagementResult(result: ManagementResult): void {
+  console.log(JSON.stringify(result, undefined, 2));
+  if (!result.ok) process.exitCode = 1;
 }
 
 interface ParsedArguments {
@@ -86,6 +128,42 @@ if ([undefined, "help", "--help"].includes(command)) {
       console.error(
         `Skill kept at ${result.skill.skillPath} (modified locally); delete it manually if unwanted.`,
       );
+    }
+  } catch (error) {
+    printError(errorMessage(error));
+  }
+} else if (
+  command !== undefined &&
+  ["list", "enable", "disable", "run"].includes(command)
+) {
+  try {
+    switch (command) {
+      case "list": {
+        printManagementResult(listJobs(projectArgument(command, rest)));
+        break;
+      }
+      case "enable": {
+        printManagementResult({
+          ok: true,
+          output: enableProject(projectArgument(command, rest)),
+        });
+        break;
+      }
+      case "disable": {
+        printManagementResult({
+          ok: true,
+          output: disableProject(projectArgument(command, rest)),
+        });
+        break;
+      }
+      case "run": {
+        const { slug, project } = runArguments(rest);
+        printManagementResult(runJobNow(slug, project));
+        break;
+      }
+      default: {
+        throw new Error(`unknown management command: ${command}`);
+      }
     }
   } catch (error) {
     printError(errorMessage(error));

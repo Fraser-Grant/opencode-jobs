@@ -80,7 +80,7 @@ export function enableProject(workdir: string): string {
     lines.push(`Removed stale units for deleted jobs: ${removed.join(", ")}`);
   lines.push(...describeJobSchedules(jobs, scopeId));
   if (failures.length > 0)
-    lines.push(`Timer activation failures:\n${failures.join("\n")}`);
+    throw new Error(`Timer activation failures:\n${failures.join("\n")}`);
   return lines.join("\n");
 }
 
@@ -101,8 +101,19 @@ export function disableProject(workdir: string): string {
   const abs = path.resolve(workdir);
   const entry: RegistryEntry | undefined = registryEntry(abs);
   if (entry === undefined) return `Project is not enabled: ${abs}`;
-  for (const slug of entry.jobs) removeJobUnits(entry.scopeId, slug);
-  systemctl(["daemon-reload"]);
+  const failures = entry.jobs.flatMap((slug) => {
+    const failure = removeJobUnits(entry.scopeId, slug);
+    return failure === undefined ? [] : [failure];
+  });
+  if (failures.length > 0) {
+    throw new Error(`Timer removal failures:\n${failures.join("\n")}`);
+  }
+  const reload = systemctl(["daemon-reload"]);
+  if (!reload.ok) {
+    throw new Error(
+      `systemctl --user daemon-reload failed: ${reload.stderr}${systemdHint(reload.stderr)}`,
+    );
+  }
   const registry = loadRegistry();
   const { [abs]: _omitted, ...remainingProjects } = registry.projects;
   registry.projects = remainingProjects;

@@ -36,6 +36,16 @@ function runCli(arguments_, options = {}) {
   });
 }
 
+function runCliFailure(arguments_, options = {}) {
+  try {
+    runCli(arguments_, { ...options, stdio: "pipe" });
+    assert.fail("expected CLI command to fail");
+  } catch (error) {
+    assert.equal(error.status, 1);
+    return JSON.parse(error.stdout);
+  }
+}
+
 function runInstall(project, options = {}) {
   return runCli(["install", project], options);
 }
@@ -242,6 +252,99 @@ assert.deepEqual(
   JSON.parse(readFileSync(join(versionedProject, "opencode.json"), "utf8")),
   {},
 );
+
+// Management commands share the plugin operations and emit machine-readable
+// results while using the requested project rather than the CLI process cwd.
+const managementProject = join(work, "management-project");
+const managementBin = join(work, "management-bin");
+mkdirSync(join(managementProject, ".opencode", "jobs"), { recursive: true });
+mkdirSync(managementBin);
+writeFileSync(
+  join(managementProject, ".opencode", "jobs", "demo.json"),
+  `${JSON.stringify({
+    slug: "demo",
+    name: "CLI Demo",
+    schedule: "0 9 * * *",
+    run: { prompt: "Run from the CLI" },
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  })}\n`,
+);
+writeFileSync(
+  join(managementBin, "systemctl"),
+  '#!/bin/sh\nfor arg do\n  if [ "${FAIL_SYSTEMCTL_ACTION:-}" = "$arg" ]; then\n    echo "forced $arg failure" >&2\n    exit 1\n  fi\ndone\nexit 0\n',
+);
+writeFileSync(
+  join(managementBin, "opencode"),
+  "#!/bin/sh\nprintf '%s\\n' '{\"sessionID\":\"ses_cli\"}'\n",
+);
+chmodSync(join(managementBin, "systemctl"), 0o755);
+chmodSync(join(managementBin, "opencode"), 0o755);
+const managementEnvironment = {
+  PATH: `${managementBin}:${process.env.PATH ?? ""}`,
+};
+const listedDisabled = JSON.parse(
+  runCli(["list", managementProject], { env: managementEnvironment }),
+);
+assert.equal(listedDisabled.ok, true);
+assert.match(listedDisabled.output, /Project not enabled/);
+assert.match(listedDisabled.output, /demo: 0 9 \* \* \*/);
+const failedEnable = runCliFailure(["enable", managementProject], {
+  env: { ...managementEnvironment, FAIL_SYSTEMCTL_ACTION: "enable" },
+});
+assert.equal(failedEnable.ok, false);
+assert.match(failedEnable.output, /Timer activation failures/);
+const listedAfterFailedEnable = JSON.parse(
+  runCli(["list", managementProject], { env: managementEnvironment }),
+);
+assert.match(listedAfterFailedEnable.output, /Project enabled/);
+const enabled = JSON.parse(
+  runCli(["enable", managementProject], { env: managementEnvironment }),
+);
+assert.equal(enabled.ok, true);
+assert.match(enabled.output, /Enabled 1 job/);
+const listedEnabled = JSON.parse(
+  runCli(["list", managementProject], { env: managementEnvironment }),
+);
+assert.match(listedEnabled.output, /Project enabled/);
+const started = JSON.parse(
+  runCli(["run", "demo", managementProject], {
+    env: managementEnvironment,
+  }),
+);
+assert.equal(started.ok, true);
+assert.match(started.output, /Started "demo" manually/);
+const failedDisable = runCliFailure(["disable", managementProject], {
+  env: { ...managementEnvironment, FAIL_SYSTEMCTL_ACTION: "disable" },
+});
+assert.equal(failedDisable.ok, false);
+assert.match(failedDisable.output, /Timer removal failures/);
+const listedAfterFailedDisable = JSON.parse(
+  runCli(["list", managementProject], { env: managementEnvironment }),
+);
+assert.match(listedAfterFailedDisable.output, /Project enabled/);
+const failedReload = runCliFailure(["disable", managementProject], {
+  env: { ...managementEnvironment, FAIL_SYSTEMCTL_ACTION: "daemon-reload" },
+});
+assert.equal(failedReload.ok, false);
+assert.match(failedReload.output, /daemon-reload failed/);
+const listedAfterFailedReload = JSON.parse(
+  runCli(["list", managementProject], { env: managementEnvironment }),
+);
+assert.match(listedAfterFailedReload.output, /Project enabled/);
+const disabled = JSON.parse(
+  runCli(["disable", managementProject], { env: managementEnvironment }),
+);
+assert.equal(disabled.ok, true);
+assert.match(disabled.output, /Disabled 1 job/);
+const failedRun = runCliFailure(["run", "demo", managementProject], {
+  env: managementEnvironment,
+});
+assert.equal(failedRun.ok, false);
+assert.match(failedRun.output, /Project is not enabled/);
+const invalidArguments = runCliFailure(["list", managementProject, "extra"]);
+assert.equal(invalidArguments.ok, false);
+assert.match(invalidArguments.output, /at most one project directory/);
 
 // A 0.1.x install migrates definitions and global state, then re-syncs the
 // registered project so existing unit names point at the new paths.
