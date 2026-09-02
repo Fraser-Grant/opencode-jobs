@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -18,11 +19,20 @@ const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const cli = join(repo, "dist", "cli.js");
 const work = "/tmp/opencode/opencode-jobs-cli-smoke";
 const demoFixture = join(repo, "scripts", "fixtures", "demo");
+const isolatedConfigHome = join(work, "cli-config-home");
+const isolatedStateHome = join(work, "cli-state-home");
 
 function runCli(arguments_, options = {}) {
+  const { env, ...rest } = options;
   return execFileSync(process.execPath, [cli, ...arguments_], {
     encoding: "utf8",
-    ...options,
+    ...rest,
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: isolatedConfigHome,
+      XDG_STATE_HOME: isolatedStateHome,
+      ...env,
+    },
   });
 }
 
@@ -50,6 +60,8 @@ function listFiles(directory, prefix = "") {
 
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
+mkdirSync(isolatedConfigHome, { recursive: true });
+mkdirSync(isolatedStateHome, { recursive: true });
 
 const demoProject = join(work, "demo");
 cpSync(demoFixture, demoProject, { recursive: true });
@@ -231,29 +243,235 @@ assert.deepEqual(
   {},
 );
 
-// uninstall --purge: scheduler data under XDG_CONFIG_HOME and job
-// definitions are removed; registry lookups stay inside the fake home
-const purgeProject = join(work, "purge-project");
-mkdirSync(join(purgeProject, ".opencode", "scheduler", "jobs"), {
+// A 0.1.x install migrates definitions and global state, then re-syncs the
+// registered project so existing unit names point at the new paths.
+const migrationProject = join(work, "migration-project");
+const migrationHome = join(work, "migration-home");
+const migrationState = join(work, "migration-state");
+const migrationBin = join(work, "migration-bin");
+const migrationSystemctlLog = join(work, "migration-systemctl.log");
+const migrationScope = scopeIdFor(migrationProject);
+mkdirSync(join(migrationProject, ".opencode", "scheduler", "jobs"), {
   recursive: true,
 });
 writeFileSync(
-  join(purgeProject, ".opencode", "scheduler", "jobs", "demo.json"),
-  "{}\n",
+  join(migrationProject, ".opencode", "scheduler", "jobs", "demo.json"),
+  `${JSON.stringify({
+    slug: "demo",
+    name: "Migrated Demo",
+    schedule: "0 9 * * *",
+    run: { prompt: "Continue the existing job" },
+    session: "persist",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  })}\n`,
 );
+const legacyJobsState = join(migrationHome, "opencode", "scheduler");
+mkdirSync(join(legacyJobsState, "runs", migrationScope), { recursive: true });
+mkdirSync(join(legacyJobsState, "sessions", migrationScope), {
+  recursive: true,
+});
+writeFileSync(
+  join(legacyJobsState, "runs", migrationScope, "demo.jsonl"),
+  '{"status":"success"}\n',
+);
+writeFileSync(
+  join(legacyJobsState, "sessions", migrationScope, "demo.txt"),
+  "ses_preserved\n",
+);
+writeFileSync(
+  join(legacyJobsState, "registry.json"),
+  `${JSON.stringify({
+    version: 1,
+    projects: {
+      [migrationProject]: {
+        scopeId: migrationScope,
+        workdir: migrationProject,
+        enabledAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        jobs: ["demo"],
+      },
+    },
+  })}\n`,
+);
+mkdirSync(
+  join(migrationHome, "opencode", "logs", "scheduler", migrationScope),
+  {
+    recursive: true,
+  },
+);
+writeFileSync(
+  join(
+    migrationHome,
+    "opencode",
+    "logs",
+    "scheduler",
+    migrationScope,
+    "demo.log",
+  ),
+  "preserved log\n",
+);
+mkdirSync(
+  join(migrationState, "opencode", "scheduler", "worktrees", migrationScope),
+  { recursive: true },
+);
+writeFileSync(
+  join(
+    migrationState,
+    "opencode",
+    "scheduler",
+    "worktrees",
+    migrationScope,
+    "preserved.txt",
+  ),
+  "preserved worktree state\n",
+);
+mkdirSync(migrationBin, { recursive: true });
+writeFileSync(
+  join(migrationBin, "systemctl"),
+  '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$SYSTEMCTL_LOG"\nexit 0\n',
+);
+chmodSync(join(migrationBin, "systemctl"), 0o755);
+const migrationEnvironment = {
+  ...process.env,
+  OPENCODE_JOBS_OPENCODE_PATH: "/bin/true",
+  PATH: `${migrationBin}:${process.env.PATH ?? ""}`,
+  SYSTEMCTL_LOG: migrationSystemctlLog,
+  XDG_CONFIG_HOME: migrationHome,
+  XDG_STATE_HOME: migrationState,
+};
+const migratedInstall = JSON.parse(
+  runInstall(migrationProject, { env: migrationEnvironment }),
+);
+assert.equal(migratedInstall.migration.moved.length, 4);
+assert.deepEqual(migratedInstall.migration.resyncedProjects, [
+  migrationProject,
+]);
+assert.equal(
+  existsSync(join(migrationProject, ".opencode", "jobs", "demo.json")),
+  true,
+);
+assert.equal(
+  readFileSync(
+    join(
+      migrationHome,
+      "opencode",
+      "jobs",
+      "runs",
+      migrationScope,
+      "demo.jsonl",
+    ),
+    "utf8",
+  ),
+  '{"status":"success"}\n',
+);
+assert.equal(
+  readFileSync(
+    join(
+      migrationHome,
+      "opencode",
+      "jobs",
+      "sessions",
+      migrationScope,
+      "demo.txt",
+    ),
+    "utf8",
+  ),
+  "ses_preserved\n",
+);
+assert.equal(
+  readFileSync(
+    join(migrationHome, "opencode", "logs", "jobs", migrationScope, "demo.log"),
+    "utf8",
+  ),
+  "preserved log\n",
+);
+assert.equal(
+  existsSync(
+    join(
+      migrationState,
+      "opencode",
+      "jobs",
+      "worktrees",
+      migrationScope,
+      "preserved.txt",
+    ),
+  ),
+  true,
+);
+assert.equal(existsSync(legacyJobsState), false);
+assert.equal(
+  existsSync(join(migrationProject, ".opencode", "scheduler")),
+  false,
+);
+const migratedScript = readFileSync(
+  join(
+    migrationHome,
+    "opencode",
+    "jobs",
+    "scopes",
+    migrationScope,
+    "run-demo.sh",
+  ),
+  "utf8",
+);
+assert.match(migratedScript, /opencode\/jobs\/runs/);
+assert.doesNotMatch(migratedScript, /opencode\/scheduler\//);
+assert.match(readFileSync(migrationSystemctlLog, "utf8"), /enable --now/);
+const repeatedMigration = JSON.parse(
+  runInstall(migrationProject, { env: migrationEnvironment }),
+);
+assert.equal(repeatedMigration.migration, undefined);
+
+const conflictProject = join(work, "migration-conflict");
+mkdirSync(join(conflictProject, ".opencode", "scheduler", "jobs"), {
+  recursive: true,
+});
+mkdirSync(join(conflictProject, ".opencode", "jobs"), { recursive: true });
+const legacyConflict = join(
+  conflictProject,
+  ".opencode",
+  "scheduler",
+  "jobs",
+  "demo.json",
+);
+const canonicalConflict = join(
+  conflictProject,
+  ".opencode",
+  "jobs",
+  "demo.json",
+);
+writeFileSync(legacyConflict, "legacy\n");
+writeFileSync(canonicalConflict, "canonical\n");
+assert.throws(() =>
+  runInstall(conflictProject, {
+    env: migrationEnvironment,
+    stdio: "pipe",
+  }),
+);
+assert.equal(readFileSync(legacyConflict, "utf8"), "legacy\n");
+assert.equal(readFileSync(canonicalConflict, "utf8"), "canonical\n");
+
+// uninstall --purge: job data under XDG_CONFIG_HOME and job
+// definitions are removed; registry lookups stay inside the fake home
+const purgeProject = join(work, "purge-project");
+mkdirSync(join(purgeProject, ".opencode", "jobs"), {
+  recursive: true,
+});
+writeFileSync(join(purgeProject, ".opencode", "jobs", "demo.json"), "{}\n");
 const fakeHome = join(work, "fake-home");
 const fakeState = join(work, "fake-state");
 const scopeId = scopeIdFor(purgeProject);
 for (const part of [
-  join("opencode", "scheduler", "scopes", scopeId),
-  join("opencode", "scheduler", "runs", scopeId),
-  join("opencode", "scheduler", "sessions", scopeId),
-  join("opencode", "scheduler", "locks", scopeId),
-  join("opencode", "logs", "scheduler", scopeId),
+  join("opencode", "jobs", "scopes", scopeId),
+  join("opencode", "jobs", "runs", scopeId),
+  join("opencode", "jobs", "sessions", scopeId),
+  join("opencode", "jobs", "locks", scopeId),
+  join("opencode", "logs", "jobs", scopeId),
 ]) {
   mkdirSync(join(fakeHome, part), { recursive: true });
 }
-mkdirSync(join(fakeState, "opencode", "scheduler", "worktrees", scopeId), {
+mkdirSync(join(fakeState, "opencode", "jobs", "worktrees", scopeId), {
   recursive: true,
 });
 const purgeUninstall = JSON.parse(
@@ -268,19 +486,19 @@ const purgeUninstall = JSON.parse(
 assert.equal(purgeUninstall.disabled, false);
 assert.equal(purgeUninstall.purge.paths.length, 7);
 assert.equal(
-  existsSync(join(fakeHome, "opencode", "scheduler", "runs", scopeId)),
+  existsSync(join(fakeHome, "opencode", "jobs", "runs", scopeId)),
   false,
 );
 assert.equal(
-  existsSync(join(fakeHome, "opencode", "logs", "scheduler", scopeId)),
+  existsSync(join(fakeHome, "opencode", "logs", "jobs", scopeId)),
   false,
 );
 assert.equal(
-  existsSync(join(fakeState, "opencode", "scheduler", "worktrees", scopeId)),
+  existsSync(join(fakeState, "opencode", "jobs", "worktrees", scopeId)),
   false,
-  "purge must remove scheduler worktrees from XDG state",
+  "purge must remove job worktrees from XDG state",
 );
-assert.equal(existsSync(join(purgeProject, ".opencode", "scheduler")), false);
+assert.equal(existsSync(join(purgeProject, ".opencode", "jobs")), false);
 assert.equal(existsSync(join(purgeProject, ".opencode")), false);
 
 const pack = JSON.parse(

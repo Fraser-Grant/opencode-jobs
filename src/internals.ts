@@ -1,4 +1,4 @@
-// Pure functions exposed for the smoke-test harness (scripts/scheduler-smoke.mjs).
+// Pure functions exposed for the smoke-test harness (scripts/smoke.mjs).
 // Not imported by the plugin entry point.
 import { deriveScopeId, shQuote, slugify } from "./paths.js";
 import { cronToOnCalendar, describeCron, parseCron } from "./cron.js";

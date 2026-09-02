@@ -44,8 +44,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   const originalEnvironment = {
     BLOCK_FILE: process.env.BLOCK_FILE,
     OPENCODE_CALLS: process.env.OPENCODE_CALLS,
-    OPENCODE_SCHEDULER_OPENCODE_PATH:
-      process.env.OPENCODE_SCHEDULER_OPENCODE_PATH,
+    OPENCODE_JOBS_OPENCODE_PATH: process.env.OPENCODE_JOBS_OPENCODE_PATH,
     PATH: process.env.PATH,
     SYSTEMCTL_LOG: process.env.SYSTEMCTL_LOG,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
@@ -85,7 +84,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
 
   process.env.BLOCK_FILE = blockFile;
   process.env.OPENCODE_CALLS = opencodeCalls;
-  process.env.OPENCODE_SCHEDULER_OPENCODE_PATH = fakeOpencode;
+  process.env.OPENCODE_JOBS_OPENCODE_PATH = fakeOpencode;
   process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
   process.env.SYSTEMCTL_LOG = systemctlLog;
   process.env.XDG_CONFIG_HOME = config;
@@ -187,7 +186,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   assert.match(worktreeJob.output, /Worktree: yes \(base/);
   const worktreeDefinition = JSON.parse(
     readFileSync(
-      join(project, ".opencode", "scheduler", "jobs", "worktree-sweep.json"),
+      join(project, ".opencode", "jobs", "worktree-sweep.json"),
       "utf8",
     ),
   );
@@ -202,7 +201,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   assert.match(enabled.output, /Enabled 3 job\(s\)/);
   assert.match(enabled.output, /next: 2030-01-01 09:00:00 UTC/);
 
-  const registryFile = join(config, "opencode", "scheduler", "registry.json");
+  const registryFile = join(config, "opencode", "jobs", "registry.json");
   const registry = JSON.parse(readFileSync(registryFile, "utf8"));
   const registryEntry = registry.projects[resolve(project)];
   assert.ok(registryEntry);
@@ -217,7 +216,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   const guardedScript = join(
     config,
     "opencode",
-    "scheduler",
+    "jobs",
     "scopes",
     scope,
     "run-guarded-review.sh",
@@ -248,7 +247,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   const runRecords = join(
     config,
     "opencode",
-    "scheduler",
+    "jobs",
     "runs",
     scope,
     "guarded-review.jsonl",
@@ -337,7 +336,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   const worktreeRecords = join(
     config,
     "opencode",
-    "scheduler",
+    "jobs",
     "runs",
     scope,
     "worktree-sweep.jsonl",
@@ -386,9 +385,7 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   assert.equal(existsSync(guardedService), false);
   assert.equal(existsSync(guardedScript), false);
   assert.equal(
-    existsSync(
-      join(project, ".opencode", "scheduler", "jobs", "guarded-review.json"),
-    ),
+    existsSync(join(project, ".opencode", "jobs", "guarded-review.json")),
     true,
   );
   assert.equal(existsSync(runRecords), true);

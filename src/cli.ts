@@ -9,7 +9,7 @@ const USAGE = `Usage: opencode-jobs <command> [projectDir]
 Commands:
   install [projectDir]            Add the plugin and bundled skill to a project (default: current directory)
   uninstall [projectDir] [--purge]  Remove the plugin entry, skill, and systemd units from a project;
-                                  --purge also deletes job definitions and scheduler data
+                                  --purge also deletes job definitions and job data
   help                            Show this help`;
 
 function packageDirectory(): string {
