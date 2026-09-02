@@ -12,10 +12,9 @@
 
 ## [1.1.0](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v1.0.0...opencode-jobs-v1.1.0) (2026-09-02)
 
-
 ### Features
 
-* add job management CLI commands ([#13](https://github.com/Fraser-Grant/opencode-jobs/issues/13)) ([5bea4ad](https://github.com/Fraser-Grant/opencode-jobs/commit/5bea4ad18ce9fcd7aea91a9d589edbd927ba7d00))
+- add job management CLI commands ([#13](https://github.com/Fraser-Grant/opencode-jobs/issues/13)) ([5bea4ad](https://github.com/Fraser-Grant/opencode-jobs/commit/5bea4ad18ce9fcd7aea91a9d589edbd927ba7d00))
 
 ## [1.0.0](https://github.com/Fraser-Grant/opencode-jobs/compare/opencode-jobs-v0.2.0...opencode-jobs-v1.0.0) (2026-09-02)
 
