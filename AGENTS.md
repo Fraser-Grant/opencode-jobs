@@ -42,7 +42,8 @@ eslint-plugin-unicorn recommended.
 - `src/internals.ts` — pure functions re-exported for the smoke harness.
 - `scripts/smoke.mjs` — behavioral smoke test (compiles src, checks
   generated scripts against real `systemd-analyze`, runs them with fake
-  `opencode`/`curl` binaries and real git repos for worktree jobs).
+  `opencode`/`curl` binaries for session and skill context behavior, and real
+  git repos for worktree jobs).
 - `scripts/cli-smoke.mjs` — real built-bin install/idempotency/config/package
   smoke coverage.
 - `skill/opencode-jobs/SKILL.md` — project skill copied by the CLI installer.

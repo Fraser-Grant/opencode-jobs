@@ -92,17 +92,17 @@ JSON results so they can also be used from setup scripts and CI.
 
 ## Tools
 
-| Tool              | What it does                                                                                             |
-| ----------------- | -------------------------------------------------------------------------------------------------------- |
-| `schedule_job`    | Create or update a job (cron schedule, prompt or custom command, session mode, guard, worktree, timeout) |
-| `list_jobs`       | List job definitions in the project with next/last run status                                            |
-| `get_job`         | Show one job: definition, timer state, last runs, recent log tail                                        |
-| `run_job`         | Fire a job now, through the exact script the timer would run                                             |
-| `job_logs`        | Tail a job's log (scheduled and manual runs both append)                                                 |
-| `delete_job`      | Delete a job, its units, run script, and session state                                                   |
-| `enable_project`  | Install systemd user units for all jobs in the project and register it                                   |
-| `disable_project` | Stop and remove the project's units (jobs and history are kept)                                          |
-| `list_projects`   | List all projects that have enabled jobs                                                                 |
+| Tool              | What it does                                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `schedule_job`    | Create or update a job (cron schedule, prompt or custom command, skills, session mode, guard, worktree, timeout) |
+| `list_jobs`       | List job definitions in the project with next/last run status                                                    |
+| `get_job`         | Show one job: definition, timer state, last runs, recent log tail                                                |
+| `run_job`         | Fire a job now, through the exact script the timer would run                                                     |
+| `job_logs`        | Tail a job's log (scheduled and manual runs both append)                                                         |
+| `delete_job`      | Delete a job, its units, run script, and session state                                                           |
+| `enable_project`  | Install systemd user units for all jobs in the project and register it                                           |
+| `disable_project` | Stop and remove the project's units (jobs and history are kept)                                                  |
+| `list_projects`   | List all projects that have enabled jobs                                                                         |
 
 ## Job definitions
 
@@ -117,6 +117,7 @@ them in PRs like any other code:
   "run": {
     "prompt": "Review commits since the last run and flag risky changes."
   },
+  "skills": ["agent-db"],
   "session": "compact+last",
   "guard": "! git diff --quiet",
   "worktree": true,
@@ -129,6 +130,13 @@ them in PRs like any other code:
 - `run` — either a natural-language `prompt` (run with `opencode run`), or a
   `command` + optional `arguments` for a project custom command. Optional
   `agent` and `model` (`"provider/model"`) select who runs it.
+- `skills` — optional skill names whose complete `SKILL.md` instructions are
+  injected as context before the run's first model turn. Resolution checks
+  project skill directories first (`.opencode/skills/`, `.claude/skills/`,
+  `.agents/skills/`), then their global equivalents. `schedule_job` rejects
+  an unknown name before writing the definition. Skill injection works in all
+  session modes and requires `curl` so the generated script can use a
+  short-lived local `opencode serve` instance.
 - `session` — continuity between runs (below).
 - `guard` — shell command run first; a non-zero exit skips the run (recorded
   as `skipped`). Example: `"! git diff --quiet"` runs only when the repo has
@@ -246,7 +254,7 @@ back up one side and retry.
 ## Requirements
 
 - Linux with a systemd user session (jobs run via `systemctl --user`)
-- `curl` (used by `compact`/`compact+last` modes only)
+- `curl` (used by skill preloading and `compact`/`compact+last` modes)
 - `git` and `flock` (from util-linux; used by `worktree` jobs only)
 - POSIX `sh` (generated scripts are `sh`/`dash`-verified)
 - The `opencode` CLI available to the timer environment

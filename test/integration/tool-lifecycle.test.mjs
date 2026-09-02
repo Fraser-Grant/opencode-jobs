@@ -146,6 +146,22 @@ test("public tools complete an enabled guarded-job lifecycle", async (context) =
   assert.equal(invalidWorktree.metadata?.error, true);
   assert.match(invalidWorktree.output, /set worktree: true/);
 
+  const unknownSkill = await scheduleJob.execute(
+    {
+      name: "Unknown skill",
+      schedule: "0 9 * * *",
+      prompt: "Never runs",
+      skills: ["missing-skill"],
+    },
+    toolContext,
+  );
+  assert.equal(unknownSkill.metadata?.error, true);
+  assert.match(unknownSkill.output, /Unknown skill "missing-skill"/);
+  assert.equal(
+    existsSync(join(project, ".opencode", "jobs", "unknown-skill.json")),
+    false,
+  );
+
   const guardedJob = await scheduleJob.execute(
     {
       name: "Guarded Review",

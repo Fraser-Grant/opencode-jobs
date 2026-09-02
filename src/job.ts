@@ -41,6 +41,7 @@ export interface Job {
   name: string;
   schedule: string;
   run: RunSpec;
+  skills?: string[];
   session?: SessionMode;
   guard?: string;
   worktree?: WorktreeOptions;
@@ -131,6 +132,21 @@ const timeoutSchema = z
   .int()
   .nonnegative("must be a non-negative integer");
 
+const skillsSchema = z
+  .array(
+    z
+      .string()
+      .regex(
+        /^[a-z0-9][a-z0-9._-]*$/i,
+        "must contain only letters, numbers, dots, underscores, and hyphens",
+      ),
+  )
+  .min(1, "must contain at least one skill")
+  .refine(
+    (skills) => new Set(skills).size === skills.length,
+    "must not contain duplicate skill names",
+  );
+
 const cronSchema = z.string().superRefine((schedule, context) => {
   try {
     parseCron(schedule);
@@ -144,6 +160,7 @@ const jobFileSchema = z.strictObject({
   name: nonEmptyStringSchema,
   schedule: cronSchema,
   run: runSpecSchema,
+  skills: skillsSchema.optional(),
   session: sessionSchema.default("new"),
   guard: guardSchema.optional(),
   worktree: worktreeSchema.optional(),
@@ -186,6 +203,14 @@ export function validateTimeout(
 ): number | undefined {
   if (value === undefined) return undefined;
   return parseWithContext(timeoutSchema, value, context);
+}
+
+export function validateSkills(
+  value: unknown,
+  context: string,
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  return parseWithContext(skillsSchema, value, context);
 }
 
 export function validateGuard(
@@ -232,6 +257,7 @@ export function loadJobFile(file: string, expectedSlug?: string): JobResult {
         name: definition.name,
         schedule: definition.schedule,
         run: definition.run,
+        ...(definition.skills !== undefined && { skills: definition.skills }),
         ...(definition.session !== "new" && { session: definition.session }),
         ...(definition.guard !== undefined && { guard: definition.guard }),
         ...(definition.worktree !== undefined && {

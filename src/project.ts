@@ -25,6 +25,7 @@ import {
   timerStatus,
   writeJobUnits,
 } from "./systemd.js";
+import { resolveSkills } from "./skills.js";
 
 export function enableProject(workdir: string): string {
   if (process.platform !== "linux")
@@ -40,6 +41,7 @@ export function enableProject(workdir: string): string {
     );
   }
   const abs = path.resolve(workdir);
+  for (const job of jobs) resolveSkills(job.skills ?? [], abs);
   const scopeId = deriveScopeId(abs);
   const opencodeBin = findOpencode();
   const pathEnvironment = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
