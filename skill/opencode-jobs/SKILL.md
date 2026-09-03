@@ -34,6 +34,13 @@ state directly.
   `compact` for summary continuity, or `compact+last` when the previous final
   result must also remain visible.
 - A `guard` is a shell command that must exit zero for the job to run.
+- `timeoutSeconds` is the hard budget: systemd SIGTERMs the run after it.
+  `stallTimeoutSeconds` (tracked sessions only, default 300, `0` disables)
+  is different: it is the idle window on the `--format json` event stream
+  after which a stalled invocation is healthchecked, killed, and the session
+  resumed (up to 2 attempts, then the run fails with exit 125). Raise it for
+  jobs with long silent thinking phases; keep `timeoutSeconds` as the outer
+  backstop.
 - Set `worktree: true` when the job should not touch the user's checkout:
   each run gets a fresh git worktree (default base
   `~/.local/state/opencode/jobs/worktrees/…`, override with

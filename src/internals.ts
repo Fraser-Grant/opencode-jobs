@@ -6,6 +6,7 @@ import {
   validateGuard,
   validateRunSpec,
   validateSession,
+  validateTimeout,
   validateWorktree,
 } from "./job.js";
 import {
@@ -26,6 +27,7 @@ export const internals = {
   validateGuard,
   validateSession,
   validateWorktree,
+  validateTimeout,
   buildOpencodeArguments,
   runScriptContent,
   serviceContent,

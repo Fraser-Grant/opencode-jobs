@@ -10,6 +10,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -49,6 +50,7 @@ const {
   validateGuard,
   validateSession,
   validateWorktree,
+  validateTimeout,
 } = internals;
 
 for (const [expr, expected] of [
@@ -139,6 +141,11 @@ assert.deepEqual(
 assert.throws(() => validateWorktree(false, "x"));
 assert.throws(() => validateWorktree({ base: "" }, "x"));
 assert.throws(() => validateWorktree({ baseX: 1 }, "x"));
+assert.equal(validateTimeout(undefined, "x"), undefined);
+assert.equal(validateTimeout(0, "x"), 0);
+assert.equal(validateTimeout(120, "x"), 120);
+assert.throws(() => validateTimeout(-1, "x"));
+assert.throws(() => validateTimeout(1.5, "x"));
 
 const jobFile = join(buildDir, "validated-job.json");
 const validJobDefinition = {
@@ -192,6 +199,36 @@ writeFileSync(
 const invalidWorktreeResult = loadJobFile(jobFile);
 assert.equal(invalidWorktreeResult.ok, false);
 assert.match(invalidWorktreeResult.error, /worktree/);
+
+writeFileSync(
+  jobFile,
+  JSON.stringify({ ...validJobDefinition, stallTimeoutSeconds: 45 }),
+);
+assert.equal(loadJobFile(jobFile).ok, false, "watchdog requires a session");
+
+writeFileSync(
+  jobFile,
+  JSON.stringify({
+    ...validJobDefinition,
+    session: "persist",
+    stallTimeoutSeconds: 45,
+  }),
+);
+const stallJobResult = loadJobFile(jobFile);
+assert.equal(stallJobResult.ok, true);
+assert.equal(stallJobResult.job.stallTimeoutSeconds, 45);
+
+writeFileSync(
+  jobFile,
+  JSON.stringify({
+    ...validJobDefinition,
+    session: "persist",
+    stallTimeoutSeconds: -5,
+  }),
+);
+const negativeStallResult = loadJobFile(jobFile);
+assert.equal(negativeStallResult.ok, false);
+assert.match(negativeStallResult.error, /stallTimeoutSeconds/);
 
 const registryFile = registryPath();
 mkdirSync(dirname(registryFile), { recursive: true });
@@ -270,6 +307,15 @@ writeFileSync(
 chmodSync(scriptPath, 0o755);
 execSync(`sh -n ${scriptPath}`);
 execSync(`dash -n ${scriptPath}`);
+const firstScript = readFileSync(scriptPath, "utf8");
+assert.ok(
+  !firstScript.includes("stall_window"),
+  "untracked sessions have no stall watchdog",
+);
+assert.ok(
+  firstScript.includes('exec "$oc_bin" "$@"'),
+  "opencode replaces the background subshell so its pid is killable",
+);
 
 const svcPath = join(work, "opencode-sched-smoke.service");
 const timerPath = join(work, "opencode-sched-smoke.timer");
@@ -668,6 +714,274 @@ const compactLastJob = {
   assert.equal(finished.at(-1).exitCode, 1);
 }
 
+// Stream-liveness watchdog: a stalled --format json stream is killed after
+// the idle window, healthchecked, and resumed (bounded); sparse-but-present
+// events never trigger it; an unhealthy instance defers to the hard timeout.
+const stallWork = "/tmp/opencode/opencode-jobs-smoke-stall";
+rmSync(stallWork, { recursive: true, force: true });
+mkdirSync(join(stallWork, "bin"), { recursive: true });
+writeFileSync(
+  join(stallWork, "bin", "opencode"),
+  [
+    "#!/bin/sh",
+    'if [ "$1" = "serve" ]; then',
+    '  echo "serve called" >> "$MARK"',
+    '  if [ "$FAKE_SERVE_SICK" = "1" ]; then exit 1; fi',
+    '  echo "opencode server listening on http://127.0.0.1:41299"',
+    "  sleep 30",
+    "  exit 0",
+    "fi",
+    'echo "run args=$*" >> "$MARK"',
+    'n="$(cat "$COUNT" 2>/dev/null || echo 0)"',
+    "n=$((n + 1))",
+    'printf \'%s\\n\' "$n" >"$COUNT"',
+    'case "$FAKE_MODE" in',
+    "  slow-alive)",
+    "    i=0",
+    '    while [ "$i" -lt 3 ]; do',
+    '      printf \'{"type":"text","sessionID":"ses_SLOW1","part":{"type":"text","text":"tick"}}\\n\'',
+    "      sleep 2",
+    "      i=$((i + 1))",
+    "    done",
+    "    exit 0",
+    "    ;;",
+    "  stall-always)",
+    '    printf \'{"type":"text","sessionID":"ses_DEAD1","part":{"type":"text","text":"partial"}}\\n\'',
+    "    sleep 30",
+    "    exit 0",
+    "    ;;",
+    "esac",
+    'if [ "$n" -ge 2 ]; then',
+    '  printf \'{"type":"text","sessionID":"ses_STALL1","part":{"type":"text","text":"recovered"}}\\n\'',
+    "  exit 0",
+    "fi",
+    'printf \'{"type":"text","sessionID":"ses_STALL1","part":{"type":"text","text":"partial"}}\\n\'',
+    "sleep 30",
+    "exit 0",
+    "",
+  ].join("\n"),
+);
+chmodSync(join(stallWork, "bin", "opencode"), 0o755);
+writeFileSync(
+  join(stallWork, "bin", "curl"),
+  [
+    "#!/bin/sh",
+    'echo "curl $*" >> "$MARK"',
+    'eval "url=\\${$#}"',
+    'case "$url" in',
+    "  */config/providers)",
+    '    printf \'%s\\n\' \'{"providers":[],"default":{"prov-x":"model-y"}}\'',
+    "    ;;",
+    "  */summarize)",
+    "    printf '%s\\n' true",
+    "    ;;",
+    "  */message)",
+    "    printf '%s\\n' 200",
+    "    ;;",
+    "esac",
+    "exit 0",
+    "",
+  ].join("\n"),
+);
+chmodSync(join(stallWork, "bin", "curl"), 0o755);
+
+function stallCase(slug, stallTimeoutSeconds) {
+  const job = {
+    slug,
+    name: "Stall Job",
+    schedule: "0 9 * * *",
+    run: { prompt: "hi" },
+    session: "persist",
+    ...(stallTimeoutSeconds !== undefined && { stallTimeoutSeconds }),
+    createdAt: "t",
+    updatedAt: "t",
+  };
+  const dir = join(stallWork, slug);
+  const mark = join(dir, "mark.log");
+  const count = join(dir, "count");
+  const xdg = join(dir, "xdg");
+  mkdirSync(dir, { recursive: true });
+  const scriptPath = join(dir, `run-${slug}.sh`);
+  writeFileSync(
+    scriptPath,
+    runScriptContent(job, `stall-${slug}`, join(stallWork, "bin", "opencode")),
+  );
+  chmodSync(scriptPath, 0o755);
+  execSync(`sh -n ${scriptPath}`);
+  execSync(`dash -n ${scriptPath}`);
+  const records = join(
+    xdg,
+    "opencode",
+    "jobs",
+    "runs",
+    `stall-${slug}`,
+    `${slug}.jsonl`,
+  );
+  const runOnce = (env = {}) =>
+    new Promise((resolve) => {
+      let output = "";
+      const child = spawn("/bin/sh", [scriptPath], {
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: xdg,
+          MARK: mark,
+          COUNT: count,
+          PATH: `${join(stallWork, "bin")}:${process.env.PATH ?? ""}`,
+          ...env,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      pendingChild = child;
+      child.stdout.on("data", (chunk) => {
+        output += String(chunk);
+      });
+      child.stderr.on("data", (chunk) => {
+        output += String(chunk);
+      });
+      child.on("exit", (code) => resolve({ code, output, child }));
+    });
+  let pendingChild;
+  const childOf = () => pendingChild;
+  const readLines = () =>
+    execSync(`cat ${records}`)
+      .toString()
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+  const markRunLines = () =>
+    execSync(`cat ${mark}`)
+      .toString()
+      .split("\n")
+      .filter((line) => line.startsWith("run args="));
+  return { mark, runOnce, readLines, markRunLines, childOf };
+}
+
+const defaultPersistScript = runScriptContent(
+  {
+    slug: "sdefault",
+    name: "Default Stall Job",
+    schedule: "0 9 * * *",
+    run: { prompt: "hi" },
+    session: "persist",
+    createdAt: "t",
+    updatedAt: "t",
+  },
+  "stall-sdefault",
+  join(stallWork, "bin", "opencode"),
+);
+assert.ok(
+  defaultPersistScript.includes("stall_window=300"),
+  "tracked sessions default to a 300s stall window",
+);
+
+{
+  const disabledScript = runScriptContent(
+    {
+      slug: "sdisabled",
+      name: "Disabled Stall Job",
+      schedule: "0 9 * * *",
+      run: { prompt: "hi" },
+      session: "persist",
+      stallTimeoutSeconds: 0,
+      createdAt: "t",
+      updatedAt: "t",
+    },
+    "stall-sdisabled",
+    join(stallWork, "bin", "opencode"),
+  );
+  assert.ok(disabledScript.includes("stall_window=0"));
+  assert.ok(!disabledScript.includes("check_health() {"));
+}
+
+{
+  const { runOnce, readLines, markRunLines } = stallCase("sstall", 3);
+  const result = await runOnce();
+  assert.equal(result.code, 0);
+  const runLines = markRunLines();
+  assert.equal(runLines.length, 2, "stalled attempt must be resumed once");
+  assert.ok(!runLines[0].includes("--session"), "first attempt starts fresh");
+  assert.ok(
+    runLines[1].includes("--session ses_STALL1"),
+    "resume continues the stalled session",
+  );
+  assert.ok(
+    result.output.includes("killing stalled attempt"),
+    "the stall is logged",
+  );
+  const events = readLines().filter((line) => line.event !== undefined);
+  assert.deepEqual(
+    events.map((line) => line.event),
+    ["stall", "resume"],
+  );
+  assert.equal(events[0].healthcheck, "healthy");
+  assert.equal(events[0].attempt, 1);
+  assert.equal(events[1].sessionId, "ses_STALL1");
+  const finished = readLines().filter(
+    (line) => line.status !== undefined && line.status !== "running",
+  );
+  assert.equal(finished.at(-1).status, "success");
+  assert.equal(finished.at(-1).sessionId, "ses_STALL1");
+}
+
+{
+  const { runOnce, readLines, markRunLines } = stallCase("sslowlive", 3);
+  const result = await runOnce({ FAKE_MODE: "slow-alive" });
+  assert.equal(result.code, 0);
+  assert.equal(markRunLines().length, 1, "slow-but-alive must not be killed");
+  assert.ok(!result.output.includes("killing stalled attempt"));
+  const events = readLines().filter((line) => line.event !== undefined);
+  assert.equal(events.length, 0, "sparse events never trigger the watchdog");
+  const finished = readLines().filter(
+    (line) => line.status !== undefined && line.status !== "running",
+  );
+  assert.equal(finished.at(-1).status, "success");
+}
+
+{
+  const { runOnce, readLines, markRunLines } = stallCase("sstallout", 3);
+  const result = await runOnce({ FAKE_MODE: "stall-always" });
+  assert.equal(result.code, 125);
+  const runLines = markRunLines();
+  assert.equal(runLines.length, 3, "one original attempt plus two resumes");
+  assert.ok(runLines[1].includes("--session ses_DEAD1"));
+  assert.ok(runLines[2].includes("--session ses_DEAD1"));
+  const events = readLines().filter((line) => line.event !== undefined);
+  assert.deepEqual(
+    events.map((line) => line.event),
+    ["stall", "resume", "stall", "resume", "stall", "resume-exhausted"],
+  );
+  const finished = readLines().filter(
+    (line) => line.status !== undefined && line.status !== "running",
+  );
+  assert.equal(finished.at(-1).status, "failed");
+  assert.equal(finished.at(-1).exitCode, 125);
+}
+
+{
+  const { runOnce, readLines, markRunLines, childOf } = stallCase("ssick", 3);
+  const pending = runOnce({ FAKE_MODE: "stall-always", FAKE_SERVE_SICK: "1" });
+  await sleep(8000);
+  childOf().kill("SIGTERM");
+  const result = await pending;
+  assert.equal(result.code, 124);
+  assert.equal(
+    markRunLines().length,
+    1,
+    "unhealthy instance must not be killed or resumed",
+  );
+  const events = readLines().filter((line) => line.event !== undefined);
+  assert.ok(events.length >= 1, "failed healthchecks are recorded");
+  for (const event of events) {
+    assert.equal(event.event, "healthcheck");
+    assert.equal(event.result, "unhealthy");
+  }
+  const finished = readLines().filter(
+    (line) => line.status !== undefined && line.status !== "running",
+  );
+  assert.equal(finished.at(-1).status, "timeout");
+  assert.equal(finished.at(-1).exitCode, 124);
+}
+
 // Worktree jobs: each run gets a fresh git worktree, commits all changes to a
 // per-run branch opencode-jobs/<slug>/…, and removes the worktree. Covers
 // changes, no-changes, failed runs, stale-worktree recovery, custom base and
@@ -946,6 +1260,6 @@ execSync("git commit -qm init", { cwd: monoRepo });
 }
 
 console.log(
-  `cron ok, quoting ok, units verified, run records ok (${lines.length} lines), guard ok, session modes ok, worktrees ok`,
+  `cron ok, quoting ok, units verified, run records ok (${lines.length} lines), guard ok, session modes ok, stall watchdog ok, worktrees ok`,
 );
 console.log("SMOKE_OK");

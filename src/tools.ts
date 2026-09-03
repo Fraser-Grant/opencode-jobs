@@ -68,6 +68,7 @@ interface ScheduleJobInput {
   agent?: string | undefined;
   model?: string | undefined;
   timeoutSeconds?: number | undefined;
+  stallTimeoutSeconds?: number | undefined;
   slug?: string | undefined;
 }
 
@@ -96,6 +97,7 @@ function scheduleJobOutput(
   let guard: string | undefined;
   let worktree: Job["worktree"];
   let timeoutSeconds: number | undefined;
+  let stallTimeoutSeconds: number | undefined;
   try {
     run = validateRunSpec(
       {
@@ -126,8 +128,14 @@ function scheduleJobOutput(
       "job",
     );
     timeoutSeconds = validateTimeout(input.timeoutSeconds, "job");
+    stallTimeoutSeconds = validateTimeout(input.stallTimeoutSeconds, "job");
   } catch (error) {
     return fail(errorMessage(error));
+  }
+  if (stallTimeoutSeconds !== undefined && session === "new") {
+    return fail(
+      'stallTimeoutSeconds requires a tracked session: set session to "persist", "compact", or "compact+last"',
+    );
   }
   const existing = loadJobFile(
     path.join(jobsDirectory(directory), `${slug}.json`),
@@ -142,6 +150,7 @@ function scheduleJobOutput(
     ...(guard !== undefined && { guard }),
     ...(worktree !== undefined && { worktree }),
     ...(timeoutSeconds !== undefined && { timeoutSeconds }),
+    ...(stallTimeoutSeconds !== undefined && { stallTimeoutSeconds }),
     createdAt: existing.ok ? existing.job.createdAt : nowIso(),
     updatedAt: nowIso(),
   };
@@ -152,6 +161,13 @@ function scheduleJobOutput(
     `Definition: ${relativePath} (${job.schedule} — ${describeCron(sets)})`,
   ];
   if (session !== "new") lines.push(`Session: ${session}`);
+  if (stallTimeoutSeconds !== undefined) {
+    lines.push(
+      stallTimeoutSeconds === 0
+        ? "Stall watchdog: disabled (stallTimeoutSeconds: 0)"
+        : `Stall watchdog: ${String(stallTimeoutSeconds)}s idle window, up to 2 resumes`,
+    );
+  }
   if (worktree !== undefined)
     lines.push(
       `Worktree: yes (base ${worktree.base ?? "default"}, branch opencode-jobs/${slug}/<run>)`,
@@ -246,6 +262,14 @@ function showJobOutput(slugInput: string, directory: string): ToolResult {
       `Timeout: ${String(job.timeoutSeconds)}s (systemd TimeoutStartSec)`,
     );
   }
+  if (job.session !== undefined) {
+    const stall = job.stallTimeoutSeconds;
+    lines.push(
+      stall === 0
+        ? "Stall watchdog: disabled (stallTimeoutSeconds: 0)"
+        : `Stall watchdog: ${String(stall ?? 300)}s idle window, up to 2 resumes (stallTimeoutSeconds)`,
+    );
+  }
   if (entry === undefined) {
     lines.push("Enabled: no (run enable_project to install the timer)");
   } else {
@@ -257,10 +281,12 @@ function showJobOutput(slugInput: string, directory: string): ToolResult {
     lines.push(`Log: ${logFile(scopeId, job.slug)}`);
   }
   const records = readRunRecords(scopeId, job.slug, 10);
-  if (records.length > 0) {
+  const runs = records
+    .toReversed()
+    .filter((record) => record.status !== undefined);
+  if (runs.length > 0) {
     lines.push("Recent runs:");
-    for (const record of records.toReversed())
-      lines.push(`  ${formatRunLine(record)}`);
+    for (const record of runs) lines.push(`  ${formatRunLine(record)}`);
   } else {
     lines.push("Recent runs: none");
   }
@@ -424,6 +450,12 @@ const scheduleJobTool = tool({
       .optional()
       .describe(
         "Hard timeout in seconds (0 or omitted disables). systemd stops the run with SIGTERM after this",
+      ),
+    stallTimeoutSeconds: tool.schema
+      .number()
+      .optional()
+      .describe(
+        'Stream stall watchdog for tracked sessions: seconds without any --format json event before the stalled invocation is killed and the session resumed (up to 2 resumes, then the run fails with exit 125). Default 300; 0 disables. Requires session "persist", "compact", or "compact+last". Distinct from timeoutSeconds, which stays the hard budget',
       ),
     slug: tool.schema
       .string()
