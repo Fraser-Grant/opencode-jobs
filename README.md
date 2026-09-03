@@ -120,7 +120,8 @@ them in PRs like any other code:
   "session": "compact+last",
   "guard": "! git diff --quiet",
   "worktree": true,
-  "timeoutSeconds": 1800
+  "timeoutSeconds": 1800,
+  "stallTimeoutSeconds": 300
 }
 ```
 
@@ -136,6 +137,9 @@ them in PRs like any other code:
 - `worktree` — run in a fresh git worktree instead of the project checkout
   (below).
 - `timeoutSeconds` — hard limit; systemd stops the run with SIGTERM.
+- `stallTimeoutSeconds` — stream stall watchdog for tracked sessions
+  (`persist`/`compact`/`compact+last`), default `300`; `0` disables it
+  (below).
 
 ### Session modes
 
@@ -148,6 +152,32 @@ them in PRs like any other code:
 
 Tracked modes (`persist`/`compact`/`compact+last`) self-heal a deleted or
 stale session by retrying once with a fresh session.
+
+### Stream stall watchdog
+
+A live connection with nothing arriving on the model API looks identical to
+slow thinking, and without help a stalled stream burns the whole
+`timeoutSeconds` budget. For tracked sessions the run script watches the
+`--format json` event stream:
+
+- When no event has arrived for `stallTimeoutSeconds` (default `300`, `0`
+  disables), the run first healthchecks the instance — a short-lived
+  `opencode serve` `/global/health` probe where available, otherwise process
+  liveness.
+- If the instance is healthy (the stall is upstream), the stalled invocation
+  is killed and the session resumed (`opencode run --session <id>` with the
+  same prompt), up to 2 resumes. When attempts are exhausted the run fails
+  with exit `125` and a `resume-exhausted` history event.
+- If the instance is unhealthy, nothing is killed: the watchdog records a
+  `healthcheck` event, keeps waiting, and the hard `timeoutSeconds` remains
+  the final backstop.
+
+`stall` (with healthcheck result and idle seconds), `resume`, and
+`resume-exhausted` events are appended to the run-history JSONL for
+post-mortem. Long silent thinking phases are the false-positive risk — raise
+the window (or disable it with `0`) for jobs that legitimately go quiet, and
+keep `timeoutSeconds` as the outer budget; the watchdog only recovers runs,
+it never extends them.
 
 ### Worktree jobs
 

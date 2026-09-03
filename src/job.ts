@@ -45,6 +45,7 @@ export interface Job {
   guard?: string;
   worktree?: WorktreeOptions;
   timeoutSeconds?: number;
+  stallTimeoutSeconds?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,18 +140,33 @@ const cronSchema = z.string().superRefine((schedule, context) => {
   }
 });
 
-const jobFileSchema = z.strictObject({
-  slug: z.string().optional(),
-  name: nonEmptyStringSchema,
-  schedule: cronSchema,
-  run: runSpecSchema,
-  session: sessionSchema.default("new"),
-  guard: guardSchema.optional(),
-  worktree: worktreeSchema.optional(),
-  timeoutSeconds: timeoutSchema.optional(),
-  createdAt: z.string().optional(),
-  updatedAt: z.string().optional(),
-});
+const jobFileSchema = z
+  .strictObject({
+    slug: z.string().optional(),
+    name: nonEmptyStringSchema,
+    schedule: cronSchema,
+    run: runSpecSchema,
+    session: sessionSchema.default("new"),
+    guard: guardSchema.optional(),
+    worktree: worktreeSchema.optional(),
+    timeoutSeconds: timeoutSchema.optional(),
+    stallTimeoutSeconds: timeoutSchema.optional(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+  })
+  .superRefine((definition, context) => {
+    if (
+      definition.stallTimeoutSeconds !== undefined &&
+      definition.session === "new"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["stallTimeoutSeconds"],
+        message:
+          'requires a tracked session: set session to "persist", "compact", or "compact+last"',
+      });
+    }
+  });
 
 function formatValidationError(error: z.ZodError): string {
   const issue = error.issues[0];
@@ -239,6 +255,9 @@ export function loadJobFile(file: string, expectedSlug?: string): JobResult {
         }),
         ...(definition.timeoutSeconds !== undefined && {
           timeoutSeconds: definition.timeoutSeconds,
+        }),
+        ...(definition.stallTimeoutSeconds !== undefined && {
+          stallTimeoutSeconds: definition.stallTimeoutSeconds,
         }),
         createdAt: definition.createdAt ?? timestamp,
         updatedAt: definition.updatedAt ?? timestamp,
